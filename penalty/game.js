@@ -4,6 +4,7 @@
 import * as THREE from './lib/three.module.min.js';
 import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
+import { loadFoxino } from './foxino-glb.js';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
 import { makeStadium } from './stadium.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
@@ -60,7 +61,9 @@ const key = new THREE.DirectionalLight(0xfff1de, 2.3); key.position.set(9, 22, 2
 const rimL = new THREE.DirectionalLight(0xffe0b8, 1.3); rimL.position.set(-14, 12, -24); scene.add(rimL);
 
 const stadium = makeStadium(scene);
-const fox = makeFoxino(); scene.add(fox.root);
+// (2026-11-13) Football Foxino is the Tripo model (foxino-glb.js); the code-built one only if the model can't load
+let fox; try { fox = await loadFoxino(); } catch (e) { console.warn('Football Foxino model did not load; using the code-built one', e); fox = makeFoxino(); }
+scene.add(fox.root);
 const rob = makeRob(); scene.add(rob.root); rob.root.position.copy(KEEPER);
 const ball = makeBall(); scene.add(ball);
 const foxBlob = makeBlob(0.9), robBlob = makeBlob(1.25), ballBlob = makeBlob(0.34, 0.5);
