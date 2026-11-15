@@ -3,6 +3,67 @@
 // World: the goal line is z = 0 (goal mouth x = -3.66..3.66, height 2.44), the penalty spot is (0, 0, 11), +z toward the taker.
 import * as THREE from './lib/three.module.min.js';
 import { toon, add } from './mat.js';
+import { GLTFLoader } from './lib/GLTFLoader.js';
+
+// ---------- (2026-11-15) the Blender stadium (Claudee RCC, blender/stadium): the bowl, its skyline, floodlights, the crowd ----------
+// loaded before the stadium is built; if anything is missing the code-built stadium below is used instead
+const STADIUM_FILES = ['stadium-main', 'stadium-side', 'stadium-far', 'stadium-corners', 'floodlight', 'camera-crew', 'mascot-banner', 'fan-1', 'fan-2', 'fan-3', 'fan-4', 'fan-5', 'fan-6'];
+export async function loadStadiumModels() {
+  const L = new GLTFLoader(), out = {};
+  await Promise.all(STADIUM_FILES.map(async (n) => { out[n] = (await L.loadAsync(`models/${n}.glb?v=1`)).scene; }));
+  return out;
+}
+// Main (vertex colours) stays lit; Glow becomes full-bright
+function dressModel(root, double = false) {
+  root.traverse((o) => {
+    if (!o.isMesh) return; const m = o.material;
+    if (m && /glow/i.test(m.name)) o.material = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: !!o.geometry.attributes.color, toneMapped: false, side: double ? THREE.DoubleSide : THREE.FrontSide });
+    else o.material = new THREE.MeshStandardMaterial({ vertexColors: !!o.geometry.attributes.color, color: 0xffffff, roughness: 0.85, metalness: 0, side: double ? THREE.DoubleSide : THREE.FrontSide });
+    o.matrixAutoUpdate = false; o.updateMatrix();
+  });
+  return root;
+}
+// the crowd in 3D for the stand behind the goal: the six Blender fans, instanced, shirts tinted (white vertices only),
+// bobbing, cheering and doing the wave on the same uniforms as the flat crowd
+function makeFanCrowd(fanScenes, seats, uniforms) {
+  const group = new THREE.Group(); group.name = 'fans';
+  const per = fanScenes.map(() => []); seats.forEach((s) => per[Math.floor(Math.random() * per.length)].push(s));
+  const palette = [0xffcd1c, 0x8f52d9, 0xff7d22, 0x3cc6ef, 0xffffff, 0xff4f9a, 0x5bd66b, 0x2c5fd6, 0xe23c3c, 0xffcd1c, 0x8f52d9, 0xff7d22];
+  const c = new THREE.Color();
+  fanScenes.forEach((sc, k) => {
+    const list = per[k]; if (!list.length) return;
+    let src = null; sc.updateMatrixWorld(true); sc.traverse((o) => { if (o.isMesh && !src) src = o; });
+    const base = src.geometry.clone().applyMatrix4(src.matrixWorld);
+    if (!base.attributes.color) { const n = base.attributes.position.count; base.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(n * 3).fill(1), 3)); }
+    const geo = new THREE.InstancedBufferGeometry(); geo.index = base.index;
+    for (const a of ['position', 'normal', 'color']) geo.setAttribute(a, base.attributes[a]);
+    const N = list.length, off = new Float32Array(N * 4), col = new Float32Array(N * 3), rnd = new Float32Array(N * 4);
+    list.forEach((s, i) => { off.set([s.x, s.y, s.z, s.rot], i * 4); c.setHex(palette[Math.floor(Math.random() * palette.length)]).convertSRGBToLinear(); const b = 0.85 + Math.random() * 0.2; col.set([c.r * b, c.g * b, c.b * b], i * 3); rnd.set([Math.random(), Math.random(), Math.random(), Math.random()], i * 4); });
+    geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4)); geo.setAttribute('aCol', new THREE.InstancedBufferAttribute(col, 3)); geo.setAttribute('aRnd', new THREE.InstancedBufferAttribute(rnd, 4));
+    geo.instanceCount = N;
+    const mat = new THREE.ShaderMaterial({ uniforms,
+      vertexShader: `attribute vec4 aOff; attribute vec3 aCol; attribute vec4 aRnd; attribute vec3 color;
+        uniform float uTime, uCheer, uWave, uSad; varying vec3 vC; varying float vL;
+        void main(){
+          float ph = aRnd.x * 6.2831, ang = atan(aOff.x, aOff.z - 40.0);
+          float wave = uWave * smoothstep(0.75, 1.0, sin(ang * 3.0 - uTime * 1.6));
+          float jump = uCheer * 0.3 * abs(sin(uTime * (8.0 + aRnd.z * 3.0) + ph)) + 0.015 * sin(uTime * 2.0 + ph) + wave * 0.32 - uSad * 0.08;
+          vec3 p = position; p.y += jump * smoothstep(0.3, 0.7, position.y + 0.4);
+          float c = cos(aOff.w), s = sin(aOff.w);
+          vec3 w = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z) + aOff.xyz;
+          vec3 n = vec3(c * normal.x + s * normal.z, normal.y, -s * normal.x + c * normal.z);
+          float shirt = step(0.92, min(color.r, min(color.g, color.b)));
+          vC = mix(color, aCol, shirt);
+          vL = 0.55 + 0.45 * max(dot(n, normalize(vec3(0.3, 0.8, 0.55))), 0.0);
+          gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
+        }`,
+      fragmentShader: `varying vec3 vC; varying float vL; void main(){ gl_FragColor = vec4(vC * vL, 1.0);
+        #include <colorspace_fragment>
+      }` });
+    const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; group.add(m);
+  });
+  return group;
+}
 
 export const GOAL_W = 7.32, GOAL_H = 2.44, POST_R = 0.06;
 const HW = GOAL_W / 2;
@@ -325,7 +386,64 @@ function flagMaterial(color) {
   return mat;
 }
 
-export function makeStadium(scene) {
+export function makeStadium(scene, MODELS = null) {
+  if (MODELS) return makeModelStadium(scene, MODELS);
+  return makeCodeStadium(scene);
+}
+function makeModelStadium(scene, M) {
+  const root = new THREE.Group(); root.name = 'stadium'; scene.add(root);
+  const sky = makeSky(); scene.add(sky);
+  root.add(makePitch());
+  const goal = makeGoal(); root.add(goal.group);
+  root.add(dressModel(M['stadium-main'])); root.add(dressModel(M['stadium-far'])); root.add(dressModel(M['stadium-corners']));
+  const sideL = dressModel(M['stadium-side']); root.add(sideL);
+  const sideR = dressModel(M['stadium-side'].clone(true), true); sideR.scale.x = -1; root.add(sideR);
+  // floodlights on the corner plinths, aimed at the middle of the pitch
+  for (const [x, z] of [[-40, -16], [40, -16], [-40, 106], [40, 106]]) { const f = dressModel(M.floodlight.clone(true)); f.position.set(x, 6.8, z); f.rotation.y = Math.atan2(0 - x, 45 - z); root.add(f); }
+  // two photographers behind the goal line, beside the posts
+  for (const x of [-5.6, 5.8]) { const c = dressModel(M['camera-crew'].clone(true)); c.position.set(x, 0, -3.3); c.rotation.y = x < 0 ? 0.25 : -0.25; root.add(c); }
+  // the crowd: 3D fans behind the goal (always in view), the flat crowd on the far sides (seen small and at an angle)
+  const D = 0.85, H = 0.42, B = 1.1, fans = [], flat = [];
+  const near = (v, list, w) => list.some((a) => Math.abs(v - a) < w);
+  for (let i = 0; i < 22; i++) for (let x = -36.2; x <= 36.2; x += 0.64) {
+    if (near(x, [9.25, -9.25, 27.75, -27.75], 0.65) || (i >= 5 && i <= 9 && near(x, [18.5, -18.5, 32.2, -32.2], 1.8)) || Math.random() > 0.84) continue;
+    fans.push({ x: x + (Math.random() - 0.5) * 0.1, y: B + H * i, z: -5.5 - (i + 0.55) * D, rot: 0 });
+  }
+  for (const sx of [-1, 1]) for (let i = 0; i < 18; i++) for (let z = -8.6; z <= 98.6; z += 0.64) {
+    const dz = z - 45; if (near(dz, [6, -6, 18, -18, 31.5, -31.5, 45, -45], 0.65) || (i >= 5 && i <= 8 && near(dz, [12, -12, 24.75, -24.75, 38.25, -38.25], 1.7)) || Math.random() > 0.85) continue;
+    flat.push({ x: sx * (43 + (i + 0.55) * D), y: B + H * i + 0.02, z, rot: sx < 0 ? Math.PI / 2 : -Math.PI / 2 });
+  }
+  for (let i = 0; i < 18; i++) for (let x = -36.2; x <= 36.2; x += 0.64) {
+    if (near(x, [0, 18, -18], 0.65) || (i >= 5 && i <= 8 && near(x, [27, -27], 1.7)) || Math.random() > 0.8) continue;
+    flat.push({ x, y: B + H * i + 0.02, z: 118 + (i + 0.55) * D, rot: Math.PI });
+  }
+  const crowd = makeCrowd(flat); root.add(crowd.mesh);
+  const fanMesh = makeFanCrowd([1, 2, 3, 4, 5, 6].map((k) => M['fan-' + k]), fans, crowd.uniforms); root.add(fanMesh);
+  // LED boards round the pitch (the scrolling ads)
+  const dark = toon(0x2a2c40, { rough: 0.8, rim: 0 }), boardTex = boardTexture(), boards = [];
+  const board = (x, z, rot, w) => { const t = boardTex.clone(); t.repeat.set(w / 14, 1); t.needsUpdate = true;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.9, 0.12), [dark, dark, dark, dark, new THREE.MeshBasicMaterial({ map: t }), dark]); m.position.set(x, 0.45, z); m.rotation.y = rot; root.add(m); boards.push(t); };
+  board(0, -4.6, 0, 30); board(-23, -4.6, 0, 16); board(23, -4.6, 0, 16); board(-38.5, 30, Math.PI / 2, 60); board(38.5, 30, -Math.PI / 2, 60); board(0, 109, Math.PI, 40);
+  if (document.fonts && document.fonts.load) document.fonts.load('40px "Lilita One"').then(() => { boardTex.userData.redraw(); for (const b of boards) b.needsUpdate = true; }).catch(() => {});
+  // the big screen on the main stand's roof and the hanging banners: painted canvases on their UV faces
+  const paint = (w, h, fn) => { const cv = canvas(w, h), g = cv.getContext('2d'); fn(g, w, h); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.flipY = false; return { t, cv, g, fn }; };
+  const screenArt = (g, w, h) => { const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#5b2bb0'); gr.addColorStop(1, '#2a1670'); g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.font = `${h * 0.36}px "Lilita One", "Arial Black", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = h * 0.05; g.strokeStyle = '#ff7d22';
+    g.strokeText('PENALTY STAR', w / 2, h * 0.42); g.fillStyle = '#ffcd1c'; g.fillText('PENALTY STAR', w / 2, h * 0.42); g.font = `${h * 0.17}px "Lilita One", sans-serif`; g.fillStyle = '#ffffff'; g.fillText('GO FOXINO!', w / 2, h * 0.76); };
+  const scr = paint(1024, 736, screenArt), scrNode = M['stadium-main'].getObjectByName('Screen');
+  if (scrNode) scrNode.traverse((o) => { if (o.isMesh) o.material = new THREE.MeshBasicMaterial({ map: scr.t, toneMapped: false }); });
+  const flags = [];
+  const banner = paint(512, 256, (g, w, h) => { g.fillStyle = '#5b2bb0'; g.fillRect(0, 0, w, h); g.fillStyle = '#ffcd1c'; g.fillRect(0, 0, w, 18); g.fillRect(0, h - 18, w, 18);
+    g.font = '92px "Lilita One", "Arial Black", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 12; g.strokeStyle = '#ff7d22'; g.strokeText('GO FOXINO!', w / 2, h / 2 + 4); g.fillStyle = '#fff'; g.fillText('GO FOXINO!', w / 2, h / 2 + 4); });
+  for (const [x, y, z] of [[-9, 6.6, -12], [14, 9.1, -16.5]]) { const b = dressModel(M['mascot-banner'].clone(true), true); b.position.set(x, y, z); root.add(b);
+    const pr = b.getObjectByName('Print'); if (pr) pr.traverse((o) => { if (o.isMesh) o.material = new THREE.MeshBasicMaterial({ map: banner.t, side: THREE.DoubleSide }); }); }
+  if (document.fonts && document.fonts.load) document.fonts.load('78px "Lilita One"').then(() => { screenArt(scr.g, 1024, 736); scr.t.needsUpdate = true; banner.fn(banner.g, 512, 256); banner.t.needsUpdate = true; }).catch(() => {});
+  return {
+    root, sky, goal, net: goal.net, crowd,
+    update(dt, t) { crowd.uniforms.uTime.value = t; for (const b of boards) b.offset.x = (t * 0.06) % 1; goal.net.update(dt); },
+  };
+}
+function makeCodeStadium(scene) {
   const root = new THREE.Group(); root.name = 'stadium';
   scene.add(root);
   const sky = makeSky(); scene.add(sky);

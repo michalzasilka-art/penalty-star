@@ -6,7 +6,7 @@ import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
 import { loadFoxino, KIT_PARTS } from './foxino-glb.js';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
-import { makeStadium } from './stadium.js';
+import { makeStadium, loadStadiumModels } from './stadium.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
 import { clamp, lerp, smooth, easeOut, easeIn, easeInOut, backOut, damp } from './mat.js';
@@ -60,7 +60,9 @@ scene.add(new THREE.HemisphereLight(0xe4f0ff, 0x5a8a45, 1.25));
 const key = new THREE.DirectionalLight(0xfff1de, 2.3); key.position.set(9, 22, 26); scene.add(key);
 const rimL = new THREE.DirectionalLight(0xffe0b8, 1.3); rimL.position.set(-14, 12, -24); scene.add(rimL);
 
-const stadium = makeStadium(scene);
+// (2026-11-15) the Blender stadium; the code-built one if its models can't load
+let STADIUM_MODELS = null; try { STADIUM_MODELS = await loadStadiumModels(); } catch (e) { console.warn('Stadium models did not load; using the code-built stadium', e); }
+const stadium = makeStadium(scene, STADIUM_MODELS);
 // (2026-11-13) Football Foxino is the Tripo model (foxino-glb.js); the code-built one only if the model can't load
 let fox; try { fox = await loadFoxino(); } catch (e) { console.warn('Football Foxino model did not load; using the code-built one', e); fox = makeFoxino(); }
 scene.add(fox.root);
