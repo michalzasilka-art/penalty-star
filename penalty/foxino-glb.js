@@ -158,6 +158,18 @@ export function makeFoxinoGLB(scene) {
     },
   };
   let kitMesh = null, kitState = null; scene.traverse((o) => { if (o.isMesh && o.material && o.material.map && !kitMesh) kitMesh = o; });
+  // (2026-11-15, the user: "remove his tail") Penalty Star's Foxino has no tail: its triangles (behind the body, below the
+  // shorts; measured on the model) are left out of the mesh
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.index) return;
+    const g = o.geometry, P = g.attributes.position, I = g.index.array, keep = [];
+    for (let t = 0; t < I.length; t += 3) {
+      let y = 0, z = 0; for (let k = 0; k < 3; k++) { y += P.getY(I[t + k]); z += P.getZ(I[t + k]); } y /= 3; z /= 3;
+      if (z < 0.095 && y < 0.44) continue;   // (the legs and shorts stay: their backs are at z 0.11–0.14)
+      keep.push(I[t], I[t + 1], I[t + 2]);
+    }
+    g.setIndex(keep);
+  });
   fox.apply(POSES.stand(0), Infinity, 0);
   return fox;
 }

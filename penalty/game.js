@@ -4,7 +4,7 @@
 import * as THREE from './lib/three.module.min.js';
 import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
-import { loadFoxino, KIT_PARTS } from './foxino-glb.js';
+import { loadFoxino, KIT_PARTS } from './foxino-glb.js?v=2';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
 import { makeStadium, loadStadiumModels, dressModel } from './stadium.js';
 import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
@@ -90,6 +90,45 @@ scene.add(foxBlob, robBlob, ballBlob);
 const bubbles = TINTS.map((_, k) => { const b = makeBubble(TINTS[k]); b.mesh.visible = false; scene.add(b.mesh); return b; });
 const confetti = makeConfetti(); scene.add(confetti.mesh);
 const sparks = makeSparks(); scene.add(sparks.points);
+// ---------- (2026-11-15) the POWER SHOT's wind: glowing ribbons that trail the ball and spiral round its path ----------
+const wind = (() => {
+  const N = 34, R = 6, ribbons = [];
+  const mat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: { uA: { value: 0 } },
+    vertexShader: `attribute float aT; varying float vT; varying float vS; attribute float aS; void main(){ vT = aT; vS = aS; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform float uA; varying float vT; varying float vS; void main(){ float a = (1.0 - vT) * (1.0 - abs(vS)) * uA; gl_FragColor = vec4(mix(vec3(0.75, 0.95, 1.0), vec3(1.0), 1.0 - vT) * a, a); }` });
+  for (let r = 0; r < R; r++) {
+    const g = new THREE.BufferGeometry(), pos = new Float32Array(N * 2 * 3), t = new Float32Array(N * 2), sd = new Float32Array(N * 2), idx = [];
+    for (let i = 0; i < N; i++) { t[i * 2] = t[i * 2 + 1] = i / (N - 1); sd[i * 2] = -1; sd[i * 2 + 1] = 1; if (i < N - 1) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2); }
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aT', new THREE.BufferAttribute(t, 1)); g.setAttribute('aS', new THREE.BufferAttribute(sd, 1)); g.setIndex(idx);
+    const m = new THREE.Mesh(g, mat); m.frustumCulled = false; m.visible = false; scene.add(m);
+    ribbons.push({ m, hist: [], ph: (r / R) * Math.PI * 2, rad: r === 0 ? 0 : 0.22 + 0.07 * (r % 2), w: r === 0 ? 0.2 : 0.06 });
+  }
+  let on = false, fade = 0;
+  const side = new THREE.Vector3(), dir = new THREE.Vector3(), up = new THREE.Vector3(), tmp = new THREE.Vector3(), toCam = new THREE.Vector3();
+  return {
+    start() { on = true; fade = 1; for (const R0 of ribbons) { R0.hist = []; R0.m.visible = true; } },
+    stop() { on = false; fade = 0; mat.uniforms.uA.value = 0; for (const R0 of ribbons) R0.m.visible = false; },
+    update(dt, t) {
+      if (!on && fade <= 0) return;
+      if (!on || ball.position.z < -0.6) fade = Math.max(0, fade - dt * 2.2);
+      mat.uniforms.uA.value = fade; if (fade <= 0) { for (const R0 of ribbons) R0.m.visible = false; return; }
+      dir.copy(BALLV.lengthSq() > 0.01 ? BALLV : _v.set(0, 0, -1)).normalize(); side.crossVectors(dir, _v.set(0, 1, 0)).normalize(); up.crossVectors(side, dir).normalize();
+      for (const R0 of ribbons) {
+        const a = R0.ph + t * 18, p = tmp.copy(ball.position).addScaledVector(side, Math.cos(a) * R0.rad).addScaledVector(up, Math.sin(a) * R0.rad);
+        if (on) { R0.hist.unshift(p.clone()); if (R0.hist.length > N) R0.hist.length = N; }
+        const pos = R0.m.geometry.attributes.position, H = R0.hist;
+        for (let i = 0; i < N; i++) {
+          const q = H[Math.min(i, H.length - 1)] || ball.position, q2 = H[Math.min(i + 1, H.length - 1)] || q;
+          toCam.subVectors(camera.position, q).normalize(); const along = _v.subVectors(q, q2); if (along.lengthSq() < 1e-8) along.copy(dir);
+          const off = along.cross(toCam).normalize().multiplyScalar(R0.w * (1 - i / N * 0.7));
+          pos.setXYZ(i * 2, q.x - off.x, q.y - off.y, q.z - off.z); pos.setXYZ(i * 2 + 1, q.x + off.x, q.y + off.y, q.z + off.z);
+        }
+        pos.needsUpdate = true;
+      }
+    },
+  };
+})();
 
 // the glove offsets Rob needs for each kind of save (measured on the rig in the pose)
 const REACH = {};
@@ -110,7 +149,7 @@ const S = {
   phase: 'loading', pt: 0, time: 0, timeScale: 1, paused: false, slow: 1,
   questions: [], qi: -1, q: null, goals: 0, results: [], picks: [],
   chosen: -1, isGoal: false, st: 0, sub: '', ev: {}, tRes: 0, nextShown: false,
-  cheer: 0.15, shake: 0, closeup: null, debugPose: null,
+  cheer: 0.15, shake: 0, closeup: null, debugPose: null, streak: 0, power: false, roll: 0,
 };
 const SHOT = {}; // the current shot's plan
 
@@ -363,7 +402,13 @@ function rigPlay(out) {
   // a small push toward the goal while the ball flies
   const push = S.phase === 'shot' ? smooth((S.st - (SHOT.tContact || 99) + 0.1) / 0.6) * (S.sub === 'goal' || S.sub === 'save' ? 1 : 1) : 0;
   if (push > 0) { out.pos.z -= 1.2 * push; out.pos.y += 0.1 * push; out.fov *= 1 - 0.04 * push; }
+  // the POWER SHOT: the camera swings round to Foxino's left, drops low and tilts, close on the run-up; at the strike it
+  // whips back behind the ball
+  S.powerK = S.phase === 'shot' && S.power ? smooth((S.st - SHOT.tRun + 0.35) / 0.5) * (1 - smooth((S.st - SHOT.tContact - 0.12) / 0.4)) : 0;
+  const P = S.powerK;
+  if (P > 0) { out.pos.lerp(_pw.set(KICK_AT.x - 2.7, 0.75, KICK_AT.z + 3.6), P); out.look.lerp(_pl.set(SPOT.x - 0.25, 0.6, SPOT.z - 1.2), P); out.fov = lerp(out.fov, 44, P); out.fx = lerp(out.fx, 0.5, P); out.fy = lerp(out.fy, 0.5, P); }
 }
+const _pw = new THREE.Vector3(), _pl = new THREE.Vector3();
 function rigMenu(out) {
   const a = innerWidth / innerHeight;
   const th = 0.42 + 0.22 * Math.sin(S.time * 0.25);
@@ -418,6 +463,7 @@ function updateCamera(dt) {
   if (S.shake > 0.001) camera.position.add(_v.set(Math.random() - 0.5, Math.random() - 0.5, 0).multiplyScalar(S.shake * 0.12));
   camera.up.set(0, 1, 0);
   camera.lookAt(CAM.look);
+  S.roll = damp(S.roll, (S.powerK || 0) * 0.32, 6, dt); if (Math.abs(S.roll) > 0.001) camera.rotateZ(S.roll);   // (the power shot's tilt to the left)
   if (Math.abs(camera.fov - CAM.fov) > 0.001) { camera.fov = CAM.fov; camera.updateProjectionMatrix(); }
   const w = innerWidth, h = innerHeight;
   const ox = (0.5 - CAM.fx) * w, oy = (0.5 - CAM.fy) * h;
@@ -471,7 +517,7 @@ function startGame() {
   const qs = buildQuestions();
   if (!qs.length) return;
   flash(() => {
-    S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = [];
+    S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = []; S.streak = 0;
     ui.start.classList.add('hidden'); ui.end.classList.add('hidden');
     ui.hud.classList.remove('hidden');
     $('playBtn').classList.remove('pulse');
@@ -482,7 +528,7 @@ function startGame() {
 
 function resetRound() {
   confetti.clear();
-  S.st = 0; S.sub = ''; S.ev = {}; S.chosen = -1; S.nextShown = false; S.slow = 1; S.tRes = 0; S.sadYaw = null;
+  S.st = 0; S.sub = ''; S.ev = {}; S.chosen = -1; S.nextShown = false; S.slow = 1; S.tRes = 0; S.sadYaw = null; S.power = false; wind.stop();
   fox.cel = null;
   fox.root.position.copy(FOX_START);
   fox.root.rotation.y = Math.atan2(SPOT.x - FOX_START.x, SPOT.z - FOX_START.z);
@@ -518,6 +564,7 @@ function choose(k) {
   if (S.phase !== 'aim' || k < 0 || k >= NB || !S.q.opts[k]) return;
   const q = S.q;
   S.chosen = k; S.isGoal = !!q.opts[k].ok;
+  S.streak = S.isGoal ? S.streak + 1 : 0; S.power = S.isGoal && S.streak % 3 === 0;   // (2026-11-15) the POWER SHOT
   S.picks[S.qi] = q.opts[k].text;
   setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {};
   labelEls[k].classList.add('picked');
@@ -534,11 +581,11 @@ function planShot() {
   const P0 = SPOT.clone();
   const mid = P0.clone().lerp(B, 0.5);
   const side = Math.abs(B.x) > 0.5 ? Math.sign(B.x) : (Math.random() < 0.5 ? -1 : 1);
-  const P1 = new THREE.Vector3(mid.x - side * (0.55 + Math.random() * 0.35), Math.max(P0.y, B.y) + 0.35 + 0.2 * Math.random(), mid.z);
+  const P1 = S.power ? new THREE.Vector3(mid.x - side * 0.25, Math.max(P0.y, B.y) + 0.12, mid.z) : new THREE.Vector3(mid.x - side * (0.55 + Math.random() * 0.35), Math.max(P0.y, B.y) + 0.35 + 0.2 * Math.random(), mid.z);
   SHOT.P0 = P0; SHOT.P1 = P1; SHOT.B = B;
-  SHOT.tRun = T_WAIT; SHOT.tKick = T_WAIT + T_RUN; SHOT.tContact = SHOT.tKick + CONTACT * T_KICK; SHOT.tArrive = SHOT.tContact + FLIGHT;
+  SHOT.tRun = T_WAIT; SHOT.tKick = T_WAIT + T_RUN; SHOT.tContact = SHOT.tKick + CONTACT * T_KICK; SHOT.flight = S.power ? FLIGHT * 0.55 : FLIGHT; SHOT.tArrive = SHOT.tContact + SHOT.flight;   // (a power shot flies almost twice as fast)
   // the direction and speed at the bubble
-  const d = new THREE.Vector3().subVectors(B, P1).multiplyScalar(2 / FLIGHT);
+  const d = new THREE.Vector3().subVectors(B, P1).multiplyScalar(2 / SHOT.flight);
   SHOT.vel = d.clone(); SHOT.speed = d.length(); SHOT.dir = d.clone().normalize();
   const catchZ = KEEPER.z + REACH.reach.z;
   // where Rob's gloves meet the ball (a save), or where he dives instead (a goal)
@@ -580,8 +627,8 @@ function updateShot(dt) {
   S.st += dt;
   const t = S.st, E = S.ev;
   if (!E.pop) S.sub = t < SHOT.tRun ? 'wait' : t < SHOT.tKick ? 'run' : t < SHOT.tContact ? 'kick' : 'flight';
-  if (t >= SHOT.tRun && !E.run) { E.run = 1; S.cheer = Math.max(S.cheer, 0.35); }
-  if (t >= SHOT.tContact && !E.kick) { E.kick = 1; sfx.kick(); S.shake = 0.5; rob.face('focus'); }
+  if (t >= SHOT.tRun && !E.run) { E.run = 1; S.cheer = Math.max(S.cheer, S.power ? 0.8 : 0.35); if (S.power) { showBanner('POWER SHOT!', 'power'); sfx.whistle && sfx.whistle(true, 0); } }
+  if (t >= SHOT.tContact && !E.kick) { E.kick = 1; sfx.kick(); S.shake = S.power ? 1.3 : 0.5; rob.face('focus'); if (S.power) { sfx.kick(); wind.start(); ui.banner.innerHTML = ''; } }
   if (t >= SHOT.tArrive && !E.pop) {
     // the ball reaches the bubble: pop!
     E.pop = 1;
@@ -596,7 +643,7 @@ function updateShot(dt) {
     BALLV.copy(SHOT.vel);
   }
   // the slow motion while the ball flies at the bubble
-  const sm = t > SHOT.tContact + 0.18 && t < SHOT.tArrive + 0.12 ? 0.45 : 1;
+  const sm = S.power ? (t < SHOT.tRun - 0.1 ? 1 : t < SHOT.tContact ? 0.32 : t < SHOT.tContact + 0.05 ? 0.06 : 1) : (t > SHOT.tContact + 0.18 && t < SHOT.tArrive + 0.12 ? 0.45 : 1);
   S.slow = damp(S.slow, sm, 10, dt / Math.max(S.slow, 0.2));
   if (S.sub === 'toGoal' && (ball.position.z < -0.15 || t > SHOT.tArrive + 0.5) && !E.goal) { E.goal = 1; onGoal(); }
   if (S.sub === 'toSave' && t >= SHOT.tCatch && !E.save) { E.save = 1; onSave(); }
@@ -897,10 +944,11 @@ function animateBall(dt) {
   const st = S.st;
   if (st < SHOT.tContact) { ball.position.copy(SPOT); return; }
   if (S.sub === 'flight') {
-    const u = clamp((st - SHOT.tContact) / FLIGHT, 0, 1);
+    const u = clamp((st - SHOT.tContact) / SHOT.flight, 0, 1);
     const prev = _bq.copy(ball.position);
     bez(u, ball.position);
     spinBall(_bp.subVectors(ball.position, prev).divideScalar(Math.max(dt, 1e-3)), dt);
+    if (S.power && dt > 0) BALLV.copy(_bp);
     return;
   }
   if (S.sub === 'toSave' || (S.sub === 'save' && !S.isGoal)) {
@@ -1020,7 +1068,7 @@ function frame(now) {
   updateLabels();
   updateBlobs();
   updateCrowd(dt);
-  stadium.update(dt, S.time);
+  stadium.update(dt, S.time); wind.update(dt, S.time);
   confetti.update(dt);
   sparks.update(dt);
   S.shake = Math.max(0, S.shake - rdt * 2.4);
