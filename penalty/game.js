@@ -1,10 +1,10 @@
-// Penalty Star: Foxino takes ten penalties. Each one is a gap-fill sentence; three soap bubbles in front of the goal
-// carry three words. Tap the right word: Foxino scores. A wrong word: Rob the goalkeeper saves it and the right
+// Penalty Star: Foxino takes ten penalties. Each one is a gap-fill sentence; four soap bubbles in front of the goal
+// carry four words (2026-11-15, the user: "four bubbles you can shoot at"). Tap the right word: Foxino scores. A wrong word: Rob the goalkeeper saves it and the right
 // bubble lights up so the right sentence is learnt.
 import * as THREE from './lib/three.module.min.js';
 import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
-import { loadFoxino } from './foxino-glb.js';
+import { loadFoxino, KIT_PARTS } from './foxino-glb.js';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
 import { makeStadium } from './stadium.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
@@ -28,10 +28,10 @@ const FOX_START = new THREE.Vector3(-1.05, 0, 12.75);     // where Foxino waits 
 const KICK_AT = new THREE.Vector3(-0.11, 0, 11.25);      // where he stands when he strikes the ball
 const LOBBY = new THREE.Vector3(0, 0, 11.6);             // where he juggles on the start screen
 const KEEPER = new THREE.Vector3(0, 0, 0.32);            // Rob on his line
-const COLS = [-2.5, 0, 2.5], ROWS = [0.8, 1.74], BUB_Z = 1.1, BUB_R = 0.68;
+const COLS = [-2.7, -0.9, 0.9, 2.7], ROWS = [0.8, 1.74], BUB_Z = 1.1, BUB_R = 0.62, NB = COLS.length, GAP = COLS[1] - COLS[0];
 const T_WAIT = 0.5, T_RUN = 0.9, T_KICK = 0.62, CONTACT = 0.4, FLIGHT = 0.6;
-const TINTS = [0xff6fb5, 0xffcd1c, 0x48d8ff];
-const CSS_TINTS = ['#ff8fc4', '#ffd84a', '#6fe2ff'];
+const TINTS = [0xff6fb5, 0xffcd1c, 0x48d8ff, 0x66e08a];
+const CSS_TINTS = ['#ff8fc4', '#ffd84a', '#6fe2ff', '#8ef0a8'];
 
 // ---------- renderer / scene ----------
 const canvas = $('gl');
@@ -68,7 +68,7 @@ const rob = makeRob(); scene.add(rob.root); rob.root.position.copy(KEEPER);
 const ball = makeBall(); scene.add(ball);
 const foxBlob = makeBlob(0.9), robBlob = makeBlob(1.25), ballBlob = makeBlob(0.34, 0.5);
 scene.add(foxBlob, robBlob, ballBlob);
-const bubbles = [0, 1, 2].map((k) => { const b = makeBubble(TINTS[k]); b.mesh.visible = false; scene.add(b.mesh); return b; });
+const bubbles = TINTS.map((_, k) => { const b = makeBubble(TINTS[k]); b.mesh.visible = false; scene.add(b.mesh); return b; });
 const confetti = makeConfetti(); scene.add(confetti.mesh);
 const sparks = makeSparks(); scene.add(sparks.points);
 
@@ -108,12 +108,37 @@ function mixComparisons(s) {
   const m = s.match(/^(.*)\[([^|\]]+)\|(the [^|\]]+)\]( \([^)]*\)) than [^.?!]*([.?!])$/);
   return m && Math.random() < 0.5 ? `${m[1]}[${m[3]}|${m[2]}]${m[4]} of all${m[5]}` : s;
 }
-function fillChoices(s) {
+// most sentences carry two wrong words; the fourth bubble borrows one the same package uses against the same right word in
+// another sentence (so it is wrong here too), else one used beside the same wrong words, else any word of that kind
+function packIndex(pk) {
+  if (pk._ix) return pk._ix;
+  const byRight = new Map(), byWrong = new Map(), byKind = new Map(), add = (m, k, v) => { if (!m.has(k)) m.set(k, new Set()); m.get(k).add(v); };
+  for (const q of pk.rounds.flat()) { const m = q.match(/\[([^\]]+)\]/); if (!m) continue; const [r, ...w] = m[1].split('|');
+    for (const x of w) { add(byRight, r.toLowerCase(), x); for (const y of w) if (y !== x) add(byWrong, y.toLowerCase(), x); add(byKind, slotKey(x) + '#' + x.split(' ').length, x); } }
+  return (pk._ix = { byRight, byWrong, byKind });
+}
+function extraWrongs(pk, right, wrong, n) {
+  const ix = packIndex(pk), have = new Set([right, ...wrong].map((t) => t.toLowerCase())), out = [];
+  const take = (set) => { for (const t of shuffle([...(set || [])])) { if (out.length >= n) return; if (!have.has(t.toLowerCase())) { have.add(t.toLowerCase()); out.push(t); } } };
+  take(ix.byRight.get(right.toLowerCase())); for (const w of wrong) take(ix.byWrong.get(w.toLowerCase()));
+  for (const w of wrong) take(ix.byKind.get(slotKey(w) + '#' + w.split(' ').length));
+  return out;
+}
+function fillChoices(s, pk) {
   const m = s.match(/\[([^\]]+)\]/);
-  const [right, ...wrong] = m[1].split('|');
-  const words = [{ text: right, ok: true }, ...shuffle(wrong).slice(0, 2).map((t) => ({ text: t, ok: false }))];
+  const [right, ...wrong0] = m[1].split('|');
+  const wrong = shuffle(wrong0).slice(0, NB - 1);
+  if (pk && wrong.length < NB - 1) {   // (a borrowed word takes the right word's capital or small first letter, so its case never gives it away; "I" stays "I")
+    const cap = /^[A-Z]/.test(right) && !/^I\b/.test(right), fix = (t) => (/^I\b/.test(t) ? t : cap ? t[0].toUpperCase() + t.slice(1) : t[0].toLowerCase() + t.slice(1));
+    wrong.push(...extraWrongs(pk, right, wrong, NB - 1 - wrong.length).map(fix).filter((t) => t.toLowerCase() !== right.toLowerCase()));
+  }
+  // (four bubbles) every word starts the same way, so a capital never gives the answer away: capitals at the start of a
+  // sentence, else the right word's own case ("I" always stays "I")
+  const before0 = s.slice(0, m.index), start = !before0.trim() || /[.!?]["')]?\s*$/.test(before0), small = !start && (/^[a-z]/.test(right) || /^I\b/.test(right));   // (mid-sentence: small letters, "I" stays "I")
+  const look = (t) => (/^I\b/.test(t) ? t : start ? t[0].toUpperCase() + t.slice(1) : small ? t[0].toLowerCase() + t.slice(1) : t);
+  const seen = new Set(), words = [{ text: look(right), ok: true }, ...wrong.map((t) => ({ text: look(t), ok: false }))].filter((w) => { const k = w.text.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
   words.sort((x, y) => slotKey(x.text).localeCompare(slotKey(y.text)) || x.text.localeCompare(y.text));
-  words.before = s.slice(0, m.index); words.after = s.slice(m.index + m[0].length); words.right = right;
+  words.before = s.slice(0, m.index); words.after = s.slice(m.index + m[0].length); words.right = words.find((w) => w.ok).text;
   return words;
 }
 const usedQ = new Set();
@@ -128,9 +153,10 @@ function buildQuestions() {
   const pk = packNow(); if (!pk) return [];
   // the package's easy third first, then the middle, then the hardest
   return [0, 0, 0, 1, 1, 1, 1, 2, 2, 2].map((r) => {
-    const w = fillChoices(pickSentence(pk, r));
-    let rows; do { rows = [0, 1, 2].map(() => (Math.random() < 0.5 ? 0 : 1)); } while (rows.every((v) => v === 0));
-    const opts = w.map((o, k) => ({ text: o.text, ok: o.ok, x: COLS[k] + (k === 1 ? (Math.random() - 0.5) * 0.5 : 0), y: ROWS[rows[k]] }));
+    const w = fillChoices(pickSentence(pk, r), pk);
+    // (four bubbles) neighbours never on the same row, so every word has room: a zigzag that starts high or low
+    const up = Math.random() < 0.5 ? 1 : 0, rows = w.map((_, k) => (k + up) % 2);
+    const opts = w.map((o, k) => ({ text: o.text, ok: o.ok, x: COLS[k] + (Math.random() - 0.5) * 0.18, y: ROWS[rows[k]] }));
     return { before: w.before, after: w.after, right: w.right, opts, correct: opts.findIndex((o) => o.ok) };
   });
 }
@@ -154,7 +180,7 @@ function renderShoot(el, results, now = -1) {
     el.appendChild(s);
   }
 }
-const labelEls = [0, 1, 2].map((k) => {
+const labelEls = TINTS.map((_, k) => {
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'blabel'; b.style.opacity = '0';
   b.style.setProperty('--c', CSS_TINTS[k]);
@@ -190,6 +216,48 @@ const muteBtn = $('muteBtn');
 muteBtn.classList.toggle('muted', isMuted());
 muteBtn.onclick = () => { unlock(); setMuted(!isMuted()); muteBtn.classList.toggle('muted', isMuted()); if (!isMuted()) sfx.click(); };
 $('playBtn').onclick = () => { unlock(); sfx.click(); startGame(); };
+
+// ---------- the Locker room (2026-11-15, the user: "a new menu where the players change their clothes") ----------
+const PALETTE = ['#ffcd1c', '#ff7d22', '#e8403a', '#ff5db1', '#8f52d9', '#2a6bff', '#3cc6ef', '#2fbf6a', '#ffffff', '#2a2c40'];
+const KITS = [
+  { name: 'Sunshine', kit: {}, show: { shirt: '#ffcd1c', trim: '#ffffff', shorts: '#ff7d22', socks: '#ffcd1c', boots: '#2a2c40' } },
+  { name: 'Galaxy', kit: { shirt: '#8f52d9', trim: '#ffcd1c', shorts: '#2a2c40', socks: '#8f52d9', boots: '#ffffff' } },
+  { name: 'Ocean', kit: { shirt: '#2a6bff', trim: '#ffffff', shorts: '#ffffff', socks: '#2a6bff', boots: '#2a2c40' } },
+  { name: 'Fire', kit: { shirt: '#e8403a', trim: '#ffffff', shorts: '#2a2c40', socks: '#e8403a', boots: '#2a2c40' } },
+  { name: 'Forest', kit: { shirt: '#2fbf6a', trim: '#ffffff', shorts: '#ffffff', socks: '#2fbf6a', boots: '#2a2c40' } },
+  { name: 'Snow', kit: { shirt: '#ffffff', trim: '#3cc6ef', shorts: '#ffffff', socks: '#ffffff', boots: '#3cc6ef' } },
+  { name: 'Candy', kit: { shirt: '#ff5db1', trim: '#ffffff', shorts: '#8f52d9', socks: '#ff5db1', boots: '#ffffff' } },
+  { name: 'Night', kit: { shirt: '#2a2c40', trim: '#ff7d22', shorts: '#2a2c40', socks: '#2a2c40', boots: '#ff7d22' } },
+];
+const PART_NAME = { shirt: 'SHIRT', trim: 'SHIRT STRIPES', shorts: 'SHORTS', socks: 'SOCKS', boots: 'BOOTS' };
+const ORIG = KITS[0].show;
+const LK = { yaw: 0, home: 0.35, vel: 0, drag: null, t: -9, kit: store.get('penalty-kit', {}) || {} };
+const kitSvg = (k) => { const c = (p) => k[p] || ORIG[p];
+  return `<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M17 5l-11 6 4 9 5-2.5V30h18V17.5l5 2.5 4-9-11-6c-1 2.6-3.6 4-7 4s-6-1.4-7-4z" fill="${c('shirt')}" stroke="#1d1640" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M17 5c1 2.6 3.6 4 7 4s6-1.4 7-4" fill="none" stroke="${c('trim')}" stroke-width="2.4"/><path d="M6.8 13l3.1 7" stroke="${c('trim')}" stroke-width="2.2"/><path d="M41.2 13l-3.1 7" stroke="${c('trim')}" stroke-width="2.2"/>
+    <path d="M15 31h18l1 9h-8l-2-4-2 4h-8z" fill="${c('shorts')}" stroke="#1d1640" stroke-width="1.6" stroke-linejoin="round"/></svg>`; };
+const sameKit = (a, b) => KIT_PARTS.every((p) => (a[p] || null) === (b[p] || null));
+function renderLocker() {
+  $('lkKits').innerHTML = KITS.map((K, i) => `<button type="button" class="lk-kit${sameKit(LK.kit, K.kit) ? ' on' : ''}" data-i="${i}">${kitSvg(K.kit)}<span>${K.name}</span></button>`).join('');
+  $('lkRows').innerHTML = KIT_PARTS.map((p) => `<div class="lk-row"><i>${PART_NAME[p]}</i><div class="lk-sw" data-p="${p}"><button type="button" class="orig${!LK.kit[p] ? ' on' : ''}" data-c="" aria-label="Original ${PART_NAME[p].toLowerCase()}"></button>${PALETTE.map((c) => `<button type="button" style="--c:${c}" class="${LK.kit[p] === c ? 'on' : ''}" data-c="${c}" aria-label="${PART_NAME[p].toLowerCase()} ${c}"></button>`).join('')}</div></div>`).join('');
+}
+function wearKit(kit, cheer = true) {
+  LK.kit = { ...kit }; store.set('penalty-kit', LK.kit); renderLocker();
+  if (fox.setKit) fox.setKit(LK.kit); if (cheer) { LK.t = S.time; sfx.pick(); }
+}
+$('lkKits').addEventListener('click', (e) => { const b = e.target.closest('.lk-kit'); if (b) wearKit(KITS[+b.dataset.i].kit); });
+$('lkRows').addEventListener('click', (e) => { const b = e.target.closest('.lk-sw button'); if (!b) return; const p = b.parentElement.dataset.p, k = { ...LK.kit }; if (b.dataset.c) k[p] = b.dataset.c; else delete k[p]; wearKit(k); });
+$('lkShuffle').onclick = () => { const k = {}; for (const p of KIT_PARTS) k[p] = pick(PALETTE); k.socks = Math.random() < 0.7 ? k.shirt : k.socks; wearKit(k); };
+function openLocker() { unlock(); sfx.click(); setPhase('locker'); LK.yaw = LK.home; LK.vel = 0; ui.start.classList.add('hidden'); $('locker').classList.remove('hidden'); renderLocker(); camSnap = false; }
+function closeLocker() { sfx.click(); $('locker').classList.add('hidden'); setPhase('menu'); ui.start.classList.remove('hidden'); }
+$('lockerBtn').onclick = openLocker;
+$('lkDone').onclick = closeLocker;
+// drag on the game itself to turn Foxino round
+canvas.addEventListener('pointerdown', (e) => { if (S.phase !== 'locker') return; LK.drag = { x: e.clientX, id: e.pointerId, t: performance.now() }; LK.vel = 0; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', (e) => { const d = LK.drag; if (!d || e.pointerId !== d.id) return; const dx = (e.clientX - d.x) / Math.min(innerWidth, innerHeight) * 5; LK.yaw += dx; const now = performance.now(); LK.vel = dx / Math.max(0.016, (now - d.t) / 1000); d.x = e.clientX; d.t = now; });
+const lkUp = (e) => { if (LK.drag && e.pointerId === LK.drag.id) { LK.drag = null; LK.vel = clamp(LK.vel, -8, 8); } };
+canvas.addEventListener('pointerup', lkUp); canvas.addEventListener('pointercancel', lkUp);
+if (fox.setKit && Object.keys(LK.kit).length) fox.setKit(LK.kit);
 $('againBtn').onclick = () => { unlock(); sfx.click(); startGame(); };
 ui.next.onclick = () => { unlock(); sfx.click(); advance(); };
 
@@ -286,6 +354,12 @@ function rigMenu(out) {
   out.fov = a < 0.8 ? 44 : a < 1.25 ? 40 : 38;
   out.fx = a < 1.25 ? 0.5 : 0.3; out.fy = a < 0.8 ? 0.5 : a < 1.25 ? 0.46 : 0.52;
 }
+// the Locker room: Foxino close up, turned by the player's finger; the kit panel beside him (wide) or under him (tall)
+function rigLocker(out) {
+  const a = innerWidth / innerHeight, d = a < 1 ? 5.4 : 2.75;
+  out.pos.set(LOBBY.x, 0.95, LOBBY.z + d); out.look.set(LOBBY.x, 0.68, LOBBY.z);
+  out.fov = a < 1 ? 40 : 36; out.fx = a < 1 ? 0.5 : 0.31; out.fy = a < 1 ? 0.24 : 0.5;
+}
 function rigEnd(out) {
   const a = innerWidth / innerHeight;
   const th = -0.35 + 0.15 * Math.sin(S.time * 0.3);
@@ -309,6 +383,7 @@ function rigClose(out) {
 }
 function rigFor(out) {
   if (S.closeup) return rigClose(out);
+  if (S.phase === 'locker') return rigLocker(out);
   if (S.phase === 'menu' || S.phase === 'loading') return rigMenu(out);
   if (S.phase === 'end') return rigEnd(out);
   return rigPlay(out);
@@ -421,7 +496,7 @@ function nextQuestion() {
 
 // the player picked bubble k
 function choose(k) {
-  if (S.phase !== 'aim' || k < 0 || k > 2) return;
+  if (S.phase !== 'aim' || k < 0 || k >= NB || !S.q.opts[k]) return;
   const q = S.q;
   S.chosen = k; S.isGoal = !!q.opts[k].ok;
   S.picks[S.qi] = q.opts[k].text;
@@ -497,6 +572,7 @@ function updateShot(dt) {
     labelEls[k].style.opacity = '0';
     sparks.emit(_v.set(b.x, b.y, BUB_Z), S.isGoal ? ['#ffffff', '#ffe066', '#6fe2ff', '#ff8fc4', '#7dffb0'] : ['#ffffff', '#c9d2e8', '#9aa6c0'], 70, 3.2, BUB_R);
     sfx.pop(S.isGoal);
+    if (S.isGoal) { _c.copy(b.mesh.position).project(camera); cfx.pop((_c.x + 1) / 2 * innerWidth, (1 - _c.y) / 2 * innerHeight); }
     S.sub = S.isGoal ? 'toGoal' : 'toSave';
     BALLV.copy(SHOT.vel);
   }
@@ -514,12 +590,45 @@ function updateShot(dt) {
   if (S.tRes && S.time - S.tRes > (S.isGoal ? 4.8 : 9)) advance();
 }
 
+// ---------- confetti on the screen (like the other Fugio games): a burst from the bubble the moment the right word is hit,
+// then two cannons from the bottom corners on the GOAL; paper bits that flutter (they turn and flip), slow down in the
+// air and fall softly; drawn on a canvas over the game at the screen's own resolution
+const cfx = (() => {
+  const cv = $('confetti'), g = cv.getContext('2d'); let bits = [], run = false, last = 0, W = 0, H = 0, dpr = 1;
+  const COL = ['#ffcd1c', '#ff4f9a', '#8f52d9', '#3cc6ef', '#ff7d22', '#5bdc7a', '#ffffff'];
+  const fit = () => { dpr = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; };
+  addEventListener('resize', fit); fit();
+  const bit = (x, y, a, sp) => { const v = sp * (0.55 + Math.random() * 0.6), s = Math.min(W, H) / 720;
+    return { x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: Math.random() * 6.3, vr: (Math.random() - 0.5) * 14, f: Math.random() * 6.3, vf: 6 + Math.random() * 8,
+      w: (8 + Math.random() * 7) * s, h: (4 + Math.random() * 4) * s, c: COL[(Math.random() * COL.length) | 0], life: 2.6 + Math.random() * 1.4, rib: Math.random() < 0.18, sway: Math.random() * 6.3 }; };
+  function step(now) {
+    const dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    for (const b of bits) {
+      b.life -= dt; b.vx *= Math.exp(-1.8 * dt); b.vy = b.vy * Math.exp(-1.8 * dt) + 900 * dt * (H / 900);
+      b.vy = Math.min(b.vy, 260 * (H / 900)); b.sway += dt * 3; b.x += (b.vx + Math.sin(b.sway) * 40) * dt; b.y += b.vy * dt; b.r += b.vr * dt; b.f += b.vf * dt;
+      const a = Math.min(1, b.life / 0.6); if (a <= 0) continue;
+      g.save(); g.globalAlpha = a; g.translate(b.x, b.y); g.rotate(b.r); g.scale(1, Math.cos(b.f)); g.fillStyle = b.c;
+      if (b.rib) { g.fillRect(-b.w, -b.h / 4, b.w * 2, b.h / 2); } else g.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      g.restore();
+    }
+    bits = bits.filter((b) => b.life > 0 && b.y < H + 40);
+    if (bits.length) requestAnimationFrame(step); else { run = false; g.clearRect(0, 0, W, H); }
+  }
+  const go = () => { if (!run) { run = true; last = performance.now(); requestAnimationFrame(step); } };
+  return {
+    pop(x, y, n = 90) { for (let i = 0; i < n; i++) bits.push(bit(x, y, Math.random() * Math.PI * 2, 520 + Math.random() * 260)); go(); },
+    cannons(n = 110) { for (const [x, a] of [[0, -1.05], [W, -Math.PI + 1.05]]) for (let i = 0; i < n; i++) bits.push(bit(x, H + 10, a + (Math.random() - 0.5) * 0.55, 1150 * (H / 900))); go(); },
+    clear() { bits = []; },
+  };
+})();
+
 function onGoal() {
   S.sub = 'goal'; S.tRes = S.time; S.goals++;
   S.results[S.qi] = 'goal';
   showBanner('GOAL!', 'goal');
   sfx.cheer(); S.cheer = 1; S.shake = 0.9;
-  confetti.burst(_v.set(0, 0, 3), 10, 4.5);
+  confetti.burst(_v.set(0, 0, 3), 10, 4.5); cfx.cannons();
   revealCard(true);
   // the other bubbles drift away
   bubbles.forEach((b, k) => { if (k !== S.chosen) { b.state = 'fade'; b.t = 0; } });
@@ -607,7 +716,15 @@ function angDamp(a, b, k, dt) { let d = b - a; d = Math.atan2(Math.sin(d), Math.
 function animateFox(dt) {
   const p = S.phase, t = S.time;
   if (S.debugPose) { fox.apply(POSES[S.debugPose.name](S.debugPose.u ?? t, S.debugPose.side ?? 1, t), Infinity, dt); fox.update(dt, t); return; }
-  if (p === 'menu' || p === 'loading') {
+  if (p === 'locker') {
+    fox.root.position.copy(LOBBY);
+    if (!LK.drag) { LK.yaw += LK.vel * dt; LK.vel *= Math.exp(-2.5 * dt); }   // (a flick keeps him turning a little)
+    if (!LK.drag && Math.abs(LK.vel || 0) < 0.05) LK.yaw = angDamp(LK.yaw, LK.home, 0.6, dt);
+    fox.root.rotation.y = LK.yaw;
+    const cheer = S.time - LK.t < 1.2;
+    fox.apply(cheer ? POSES.celebrate(S.time - LK.t) : POSES.stand(t), cheer ? 10 : 6, dt);
+    fox.tailAmp = 1;
+  } else if (p === 'menu' || p === 'loading') {
     fox.root.position.copy(LOBBY); fox.root.rotation.y = 0;
     const J = 0.66, n = Math.floor(S.time / J), u = (S.time / J) % 1, next = n % 2 ? 1 : -1;
     fox.apply(POSES.juggle(u, next, t), 14, dt);
@@ -685,7 +802,7 @@ function sadFox(dt) {
 // ---------- animation: Rob ----------
 function animateRob(dt) {
   const t = S.time, p = S.phase;
-  if (p === 'menu' || p === 'loading' || p === 'end' || p === 'aim' || (p === 'shot' && S.st < SHOT.dive.t0)) {
+  if (p === 'menu' || p === 'loading' || p === 'locker' || p === 'end' || p === 'aim' || (p === 'shot' && S.st < SHOT.dive.t0)) {
     const sway = Math.sin(t * 1.3) * 0.35;
     const pose = p === 'menu' && Math.sin(t * 0.4) > 0.6 ? RPOSES.wave(t) : RPOSES.ready(t);
     rob.apply(pose, 6, dt);
@@ -747,7 +864,7 @@ function spinBall(v, dt) {
 }
 function animateBall(dt) {
   const p = S.phase;
-  if ((S.closeup || S.debugPose) && (p === 'menu' || p === 'loading')) { ball.position.set(LOBBY.x + 0.5, BALL_R, LOBBY.z + 0.35); return; }
+  if ((S.closeup || S.debugPose) && (p === 'menu' || p === 'loading') || p === 'locker') { ball.position.set(LOBBY.x + 0.5, BALL_R, LOBBY.z + 0.35); return; }
   if (p === 'menu' || p === 'loading') {
     // juggling: the ball flies from one foot to the other
     const J = 0.66, n = Math.floor(S.time / J), u = (S.time / J) % 1, next = n % 2 ? 1 : -1;
@@ -796,7 +913,7 @@ function animateBall(dt) {
 
 // ---------- bubbles, labels ----------
 function animateBubbles(dt) {
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < NB; k++) {
     const b = bubbles[k];
     if (!b.mesh.visible) continue;
     b.t += dt;
@@ -818,7 +935,7 @@ const _c = new THREE.Vector3(), _e = new THREE.Vector3(), camRight = new THREE.V
 function updateLabels() {
   const W = innerWidth, H = innerHeight;
   camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < NB; k++) {
     const el = labelEls[k], b = bubbles[k];
     const show = b.mesh.visible && (S.phase === 'aim' || S.phase === 'shot') && !S.closeup && !(b.state === 'pop');
     if (!show) { if (el.style.opacity !== '0') { el.style.opacity = '0'; el.style.pointerEvents = 'none'; } continue; }
@@ -830,7 +947,7 @@ function updateLabels() {
     const longest = Math.max(...word.split(' ').map((s) => s.length), 1);
     const box = Math.max(64, r * 2.1);
     // as big as the space between two bubbles allows (the words matter more than the bubbles)
-    const colPx = (r / Math.max(b.mesh.scale.x, 0.01)) * 2.5;
+    const colPx = (r / Math.max(b.mesh.scale.x, 0.01)) * GAP * 1.05;
     const maxW = Math.max(72, Math.min(colPx - 6, W * 0.42));
     const fs = Math.floor(clamp(Math.min(Math.max(r * 0.62, 21), (maxW - 16) / (0.56 * longest + 0.3)), 15, 38));
     el.style.width = el.style.height = Math.round(box) + 'px';
@@ -926,7 +1043,7 @@ window.PS = {
   // tap the right bubble (or a wrong one)
   answer: (right = true) => {
     if (S.phase !== 'aim') return false;
-    const k = right ? S.q.correct : (S.q.correct + 1 + Math.floor(Math.random() * 2)) % 3;
+    const k = right ? S.q.correct : (S.q.correct + 1 + Math.floor(Math.random() * (NB - 1))) % NB;
     choose(k); return k;
   },
   next: () => { advance(); return true; },

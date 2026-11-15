@@ -12,11 +12,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:ital,wght@0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="penalty.css?v=1">
+<link rel="stylesheet" href="penalty.css?v=2">
 </head>
 <body>
 <canvas id="gl" aria-hidden="true"></canvas>
 <div id="labels"></div>
+<canvas id="confetti" aria-hidden="true"></canvas>
 
 <div id="hud" class="hidden">
   <div id="card">
@@ -47,6 +48,18 @@
     <div id="bestLine" class="best-line hidden"></div>
     <button id="packBtn" class="packcard" type="button"></button>
     <button id="playBtn" class="bigbtn" type="button">PLAY</button>
+    <button id="lockerBtn" class="lockerbtn" type="button"><svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><path d="M11 4l-7 4 3 6 3-1.5V28h12V12.5l3 1.5 3-6-7-4c-.6 1.8-2.6 3-5 3s-4.4-1.2-5-3z" fill="currentColor"/></svg>LOCKER ROOM</button>
+  </div>
+</section>
+
+<!-- (2026-11-15) the Locker room: Foxino's football kit, colour by colour -->
+<section id="locker" class="screen hidden" aria-label="Locker room">
+  <div class="locker-panel">
+    <div class="lk-head"><small>FOXINO&rsquo;S</small><b>LOCKER ROOM</b><span>Drag Foxino to turn him round</span></div>
+    <div class="lk-label">KITS</div>
+    <div class="lk-kits" id="lkKits"></div>
+    <div class="lk-rows" id="lkRows"></div>
+    <div class="lk-actions"><button id="lkShuffle" class="lkbtn" type="button">SHUFFLE</button><button id="lkDone" class="bigbtn" type="button">DONE</button></div>
   </div>
 </section>
 
@@ -67,6 +80,6 @@
 <noscript>Penalty Star needs JavaScript.</noscript>
 <script src="packages.js?v=1"></script>
 <script src="/shared/pack-picker.js?v=8"></script>
-<script type="module" src="game.js?v=2"></script>
+<script type="module" src="game.js?v=3"></script>
 </body>
 </html>

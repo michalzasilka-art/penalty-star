@@ -30,6 +30,36 @@ export async function loadFoxino() {
   return makeFoxinoGLB(gltf.scene);
 }
 
+// ---------- the kit (2026-11-15, the Locker room): shirt, trim, shorts, socks and boots recoloured on the model's own texture.
+// models/kit-mask.png marks each kit texel (grey 40 shirt, 80 trim, 120 shorts, 160 socks, 200 boots; made from the bone
+// each part moves with and the texel's colour), so the fur, face and tail never change. The shading stays: every texel
+// keeps its brightness relative to that part's average, on the new colour.
+export const KIT_PARTS = ['shirt', 'trim', 'shorts', 'socks', 'boots'];
+async function kitSetup(mat) {
+  const src = mat.map && mat.map.image; if (!src) return null;
+  const w = src.width, h = src.height, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(src, 0, 0); const base = g.getImageData(0, 0, w, h);
+  const mi = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'models/kit-mask.png?v=1'; });
+  const mc = document.createElement('canvas'); mc.width = w; mc.height = h; const mg = mc.getContext('2d', { willReadFrequently: true }); mg.imageSmoothingEnabled = false; mg.drawImage(mi, 0, 0, w, h);
+  const md = mg.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h), sum = new Float64Array(6), cnt = new Float64Array(6), d = base.data;
+  for (let i = 0; i < w * h; i++) { const k = Math.round(md[i * 4] / 40); mask[i] = k > 5 ? 0 : k; if (k > 0 && k <= 5) { sum[k] += 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; cnt[k]++; } }
+  const avg = Array.from(sum, (v, k) => (cnt[k] ? v / cnt[k] : 128));
+  const tex = new THREE.CanvasTexture(cv); tex.flipY = mat.map.flipY; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = mat.map.anisotropy || 4;
+  return { w, h, g, base, mask, avg, tex, out: g.createImageData(w, h) };
+}
+function kitPaint(K, kit) {
+  const d = K.base.data, o = K.out.data, n = K.w * K.h, col = [null];
+  for (const p of KIT_PARTS) { const c = kit && kit[p]; col.push(c ? new THREE.Color(c) : null); }
+  const rgb = col.map((c) => c && [c.r * 255, c.g * 255, c.b * 255]);
+  o.set(d);
+  for (let i = 0; i < n; i++) {
+    const k = K.mask[i]; if (!k) continue; const c = rgb[k]; if (!c) continue;
+    const j = i * 4, l = (0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2]) / K.avg[k], f = Math.pow(l, 0.85);
+    o[j] = Math.min(255, c[0] * f); o[j + 1] = Math.min(255, c[1] * f); o[j + 2] = Math.min(255, c[2] * f);
+  }
+  K.g.putImageData(K.out, 0, 0); K.tex.needsUpdate = true;
+}
+
 export function makeFoxinoGLB(scene) {
   const root = new THREE.Group(); root.name = 'foxino';
   const body = new THREE.Group(); body.name = 'body'; root.add(body);
@@ -117,7 +147,17 @@ export function makeFoxinoGLB(scene) {
       void dt; void t;
     },
     foot(side, out) { return bones[side === 'L' ? 'LeftFoot' : 'RightFoot'].getWorldPosition(out); },
+    // the Locker room: paint the kit ({ shirt, trim, shorts, socks, boots } colours; a missing one keeps the original)
+    kit: null,
+    async setKit(kit) {
+      fox.kit = kit || null; if (!kitMesh) return false;
+      if (!kitState) { kitState = kitSetup(kitMesh.material).catch((e) => { console.warn('kit mask did not load', e); return null; }); }
+      const K = await kitState; if (!K) return false;
+      kitPaint(K, fox.kit); if (kitMesh.material.map !== K.tex) { kitMesh.material.map = K.tex; kitMesh.material.needsUpdate = true; }
+      return true;
+    },
   };
+  let kitMesh = null, kitState = null; scene.traverse((o) => { if (o.isMesh && o.material && o.material.map && !kitMesh) kitMesh = o; });
   fox.apply(POSES.stand(0), Infinity, 0);
   return fox;
 }
