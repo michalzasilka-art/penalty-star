@@ -6,7 +6,8 @@ import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
 import { loadFoxino, KIT_PARTS } from './foxino-glb.js';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
-import { makeStadium, loadStadiumModels } from './stadium.js';
+import { makeStadium, loadStadiumModels, dressModel } from './stadium.js';
+import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
 import { clamp, lerp, smooth, easeOut, easeIn, easeInOut, backOut, damp } from './mat.js';
@@ -63,6 +64,22 @@ const rimL = new THREE.DirectionalLight(0xffe0b8, 1.3); rimL.position.set(-14, 1
 // (2026-11-15) the Blender stadium; the code-built one if its models can't load
 let STADIUM_MODELS = null; try { STADIUM_MODELS = await loadStadiumModels(); } catch (e) { console.warn('Stadium models did not load; using the code-built stadium', e); }
 const stadium = makeStadium(scene, STADIUM_MODELS);
+// (2026-11-15) the Locker room set from Blender, 40 m under the pitch: the Locker room's camera and Foxino go down there.
+// Its hanging shirts wear the shirt colour the player picks; the door plate says FOXINO
+const LOCKER_AT = new THREE.Vector3(0, -40, 11.6);
+const LROOM = { shirts: [] };
+new GLTFLoaderLR().loadAsync('models/locker-room.glb?v=1').then((g) => {
+  const r = dressModel(g.scene); r.position.copy(LOCKER_AT); scene.add(r); LROOM.root = r;
+  r.traverse((o) => { if (o.isMesh && (o.name === 'Shirts' || (o.parent && o.parent.name === 'Shirts'))) { o.material = o.material.clone(); LROOM.shirts.push(o); } });
+  const plate = r.getObjectByName('Plate');
+  if (plate) { const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96; const g2 = cv.getContext('2d'); const draw = () => { g2.fillStyle = '#ffcd1c'; g2.fillRect(0, 0, 256, 96); g2.fillStyle = '#5b2bb0'; g2.font = '58px "Lilita One", "Arial Black", sans-serif'; g2.textAlign = 'center'; g2.textBaseline = 'middle'; g2.fillText('FOXINO', 128, 52); }; draw();
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; plate.traverse((o) => { if (o.isMesh) o.material = new THREE.MeshBasicMaterial({ map: t }); });
+    if (document.fonts && document.fonts.load) document.fonts.load('58px "Lilita One"').then(() => { draw(); t.needsUpdate = true; }).catch(() => {}); }
+  // a warm light inside the room
+  const lamp = new THREE.PointLight(0xfff2dc, 18, 12, 1.5); lamp.position.copy(LOCKER_AT).add(new THREE.Vector3(0, 3, 0)); scene.add(lamp);
+  tintShirts();
+}).catch((e) => console.warn('Locker room set did not load; the Locker room uses the pitch', e));
+function tintShirts() { let c = '#ffcd1c'; try { c = (LK.kit && LK.kit.shirt) || c; } catch (e) { /* (the kit settings are not set up yet) */ } for (const m of LROOM.shirts) m.material.color.set(c); }
 // (2026-11-13) Football Foxino is the Tripo model (foxino-glb.js); the code-built one only if the model can't load
 let fox; try { fox = await loadFoxino(); } catch (e) { console.warn('Football Foxino model did not load; using the code-built one', e); fox = makeFoxino(); }
 scene.add(fox.root);
@@ -244,13 +261,13 @@ function renderLocker() {
   $('lkRows').innerHTML = KIT_PARTS.map((p) => `<div class="lk-row"><i>${PART_NAME[p]}</i><div class="lk-sw" data-p="${p}"><button type="button" class="orig${!LK.kit[p] ? ' on' : ''}" data-c="" aria-label="Original ${PART_NAME[p].toLowerCase()}"></button>${PALETTE.map((c) => `<button type="button" style="--c:${c}" class="${LK.kit[p] === c ? 'on' : ''}" data-c="${c}" aria-label="${PART_NAME[p].toLowerCase()} ${c}"></button>`).join('')}</div></div>`).join('');
 }
 function wearKit(kit, cheer = true) {
-  LK.kit = { ...kit }; store.set('penalty-kit', LK.kit); renderLocker();
+  LK.kit = { ...kit }; store.set('penalty-kit', LK.kit); renderLocker(); tintShirts();
   if (fox.setKit) fox.setKit(LK.kit); if (cheer) { LK.t = S.time; sfx.pick(); }
 }
 $('lkKits').addEventListener('click', (e) => { const b = e.target.closest('.lk-kit'); if (b) wearKit(KITS[+b.dataset.i].kit); });
 $('lkRows').addEventListener('click', (e) => { const b = e.target.closest('.lk-sw button'); if (!b) return; const p = b.parentElement.dataset.p, k = { ...LK.kit }; if (b.dataset.c) k[p] = b.dataset.c; else delete k[p]; wearKit(k); });
 $('lkShuffle').onclick = () => { const k = {}; for (const p of KIT_PARTS) k[p] = pick(PALETTE); k.socks = Math.random() < 0.7 ? k.shirt : k.socks; wearKit(k); };
-function openLocker() { unlock(); sfx.click(); setPhase('locker'); LK.yaw = LK.home; LK.vel = 0; ui.start.classList.add('hidden'); $('locker').classList.remove('hidden'); renderLocker(); camSnap = false; }
+function openLocker() { unlock(); sfx.click(); setPhase('locker'); LK.yaw = LK.home; LK.vel = 0; ui.start.classList.add('hidden'); $('locker').classList.remove('hidden'); renderLocker(); tintShirts(); camSnap = false; }
 function closeLocker() { sfx.click(); $('locker').classList.add('hidden'); setPhase('menu'); ui.start.classList.remove('hidden'); }
 $('lockerBtn').onclick = openLocker;
 $('lkDone').onclick = closeLocker;
@@ -358,8 +375,8 @@ function rigMenu(out) {
 }
 // the Locker room: Foxino close up, turned by the player's finger; the kit panel beside him (wide) or under him (tall)
 function rigLocker(out) {
-  const a = innerWidth / innerHeight, d = a < 1 ? 5.4 : 2.75;
-  out.pos.set(LOBBY.x, 0.95, LOBBY.z + d); out.look.set(LOBBY.x, 0.68, LOBBY.z);
+  const a = innerWidth / innerHeight, d = a < 1 ? 5.4 : 2.75, A = LROOM.root ? LOCKER_AT : LOBBY;
+  out.pos.set(A.x, A.y + 0.95, A.z + d); out.look.set(A.x, A.y + 0.68, A.z);
   out.fov = a < 1 ? 40 : 36; out.fx = a < 1 ? 0.5 : 0.31; out.fy = a < 1 ? 0.24 : 0.5;
 }
 function rigEnd(out) {
@@ -719,7 +736,7 @@ function animateFox(dt) {
   const p = S.phase, t = S.time;
   if (S.debugPose) { fox.apply(POSES[S.debugPose.name](S.debugPose.u ?? t, S.debugPose.side ?? 1, t), Infinity, dt); fox.update(dt, t); return; }
   if (p === 'locker') {
-    fox.root.position.copy(LOBBY);
+    fox.root.position.copy(LROOM.root ? LOCKER_AT : LOBBY);
     if (!LK.drag) { LK.yaw += LK.vel * dt; LK.vel *= Math.exp(-2.5 * dt); }   // (a flick keeps him turning a little)
     if (!LK.drag && Math.abs(LK.vel || 0) < 0.05) LK.yaw = angDamp(LK.yaw, LK.home, 0.6, dt);
     fox.root.rotation.y = LK.yaw;
@@ -866,7 +883,7 @@ function spinBall(v, dt) {
 }
 function animateBall(dt) {
   const p = S.phase;
-  if ((S.closeup || S.debugPose) && (p === 'menu' || p === 'loading') || p === 'locker') { ball.position.set(LOBBY.x + 0.5, BALL_R, LOBBY.z + 0.35); return; }
+  if ((S.closeup || S.debugPose) && (p === 'menu' || p === 'loading') || p === 'locker') { const A = p === 'locker' && LROOM.root ? LOCKER_AT : LOBBY; ball.position.set(A.x + 0.5, A.y + BALL_R, A.z + 0.35); return; }
   if (p === 'menu' || p === 'loading') {
     // juggling: the ball flies from one foot to the other
     const J = 0.66, n = Math.floor(S.time / J), u = (S.time / J) % 1, next = n % 2 ? 1 : -1;
@@ -965,7 +982,7 @@ function updateLabels() {
 // ---------- shadows, crowd, effects ----------
 function updateBlobs() {
   fox.root.updateMatrixWorld(true);
-  foxBlob.position.set(fox.root.position.x, 0.012, fox.root.position.z);
+  foxBlob.position.set(fox.root.position.x, fox.root.position.y + 0.012, fox.root.position.z);
   foxBlob.scale.setScalar(1 - clamp(fox.pose.y, 0, 0.4));
   rob.dive.getWorldPosition(_v);
   robBlob.position.set(_v.x, 0.013, _v.z);
@@ -974,7 +991,7 @@ function updateBlobs() {
   ballBlob.position.set(ball.position.x, 0.014, ball.position.z);
   const bh = clamp((ball.position.y - BALL_R) / 2.5, 0, 1);
   ballBlob.scale.setScalar(1 + bh); ballBlob.material.opacity = 0.5 * (1 - bh * 0.8);
-  ballBlob.visible = ball.visible;
+  ballBlob.visible = ball.visible && ball.position.y > -1;   // (not in the Locker room under the pitch)
 }
 function updateCrowd(dt) {
   const base = S.phase === 'menu' ? 0.12 : S.phase === 'end' ? 0.25 : S.sub === 'run' || S.sub === 'kick' || S.sub === 'flight' ? 0.3 : 0.08;

@@ -14,7 +14,7 @@ export async function loadStadiumModels() {
   return out;
 }
 // Main (vertex colours) stays lit; Glow becomes full-bright
-function dressModel(root, double = false) {
+export function dressModel(root, double = false) {
   root.traverse((o) => {
     if (!o.isMesh) return; const m = o.material;
     if (m && /glow/i.test(m.name)) o.material = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: !!o.geometry.attributes.color, toneMapped: false, side: double ? THREE.DoubleSide : THREE.FrontSide });
