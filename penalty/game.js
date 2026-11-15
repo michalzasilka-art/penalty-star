@@ -27,7 +27,8 @@ const QN = 10;
 const SPOT = new THREE.Vector3(0, BALL_R, 11);           // the penalty spot
 const FOX_START = new THREE.Vector3(-1.05, 0, 12.75);     // where Foxino waits (a right-footer comes from his left)
 const KICK_AT = new THREE.Vector3(-0.11, 0, 11.25);      // where he stands when he strikes the ball
-const LOBBY = new THREE.Vector3(0, 0, 11.6);             // where he juggles on the start screen
+const LOBBY = new THREE.Vector3(0, 0, 11.6);
+const ROB_START = new THREE.Vector3(-2.3, 0, 13.4);   // (keeper rounds: Rob waits out of the way of the goal, then runs in)             // where he juggles on the start screen
 const KEEPER = new THREE.Vector3(0, 0, 0.32);            // Rob on his line
 const COLS = [-2.7, -0.9, 0.9, 2.7], ROWS = [0.8, 1.74], BUB_Z = 1.1, BUB_R = 0.62, NB = COLS.length, GAP = COLS[1] - COLS[0];
 const T_WAIT = 0.5, T_RUN = 0.9, T_KICK = 0.62, CONTACT = 0.4, FLIGHT = 0.6;
@@ -149,7 +150,7 @@ const S = {
   phase: 'loading', pt: 0, time: 0, timeScale: 1, paused: false, slow: 1,
   questions: [], qi: -1, q: null, goals: 0, results: [], picks: [],
   chosen: -1, isGoal: false, st: 0, sub: '', ev: {}, tRes: 0, nextShown: false,
-  cheer: 0.15, shake: 0, closeup: null, debugPose: null, streak: 0, power: false, roll: 0,
+  cheer: 0.15, shake: 0, closeup: null, debugPose: null, streak: 0, power: false, roll: 0, gk: false, lastPower: 0,
 };
 const SHOT = {}; // the current shot's plan
 
@@ -225,6 +226,7 @@ const ui = {
   banner: $('banner'), flash: $('flash'), start: $('start'), end: $('end'), loading: $('loading'), labels: $('labels'),
 };
 const ICON = {
+  get stop() { return ICON.save; }, get let() { return ICON.goal; },
   goal: '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8.4" fill="#fff" stroke="#1d1640" stroke-width="1.4"/><path d="M10 6.3l3 2.2-1.1 3.5H8.1L7 8.5z" fill="#1d1640"/><path d="M10 1.8v4.5M13 8.5l4.2-1.5M11.9 12l2.6 3.7M8.1 12l-2.6 3.7M7 8.5L2.8 7" stroke="#1d1640" stroke-width="1.1" fill="none"/></svg>',
   save: '<svg viewBox="0 0 20 20"><path d="M5.6 11.4V6.6a1.25 1.25 0 0 1 2.5 0v3.2V4.9a1.25 1.25 0 0 1 2.5 0v4.6V5.6a1.25 1.25 0 0 1 2.5 0v5.3l1-1.6a1.25 1.25 0 0 1 2.2 1.2l-2.3 4.4a4.3 4.3 0 0 1-3.8 2.4H9.9a4.3 4.3 0 0 1-4.3-4.3z" fill="#ff7a12" stroke="#8a2f08" stroke-width="1.1" stroke-linejoin="round"/><path d="M5.8 14.2h7.4" stroke="#b9f53c" stroke-width="1.6"/></svg>',
 };
@@ -328,9 +330,9 @@ function flash(cb, hold = 120) {
 }
 
 function setCard(q) {
-  ui.kick.textContent = `PENALTY ${S.qi + 1} / ${QN}`;
+  ui.kick.innerHTML = `PENALTY ${S.qi + 1} / ${QN} <em class="role ${S.gk ? 'gk' : 'gs'}">${S.gk ? 'KEEPER' : 'STRIKER'}</em>`;
   ui.sentence.innerHTML = `${hints(q.before)}<span class="gap">&nbsp;</span>${hints(q.after)}`;
-  ui.note.className = ''; ui.note.innerHTML = S.qi < 2 ? 'Tap the bubble with the right word!' : '&nbsp;';
+  ui.note.className = ''; ui.note.innerHTML = S.qi < 2 ? (S.gk ? 'You are in goal! Rob shoots at the right word: tap it to dive there!' : 'Your turn to shoot: tap the bubble with the right word!') : '&nbsp;';
   ui.next.classList.add('hidden');
   renderShoot(ui.shoot, S.results, S.qi);
 }
@@ -517,7 +519,7 @@ function startGame() {
   const qs = buildQuestions();
   if (!qs.length) return;
   flash(() => {
-    S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = []; S.streak = 0;
+    S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = []; S.streak = 0; S.lastPower = 0;
     ui.start.classList.add('hidden'); ui.end.classList.add('hidden');
     ui.hud.classList.remove('hidden');
     $('playBtn').classList.remove('pulse');
@@ -537,10 +539,15 @@ function resetRound() {
   rob.root.position.copy(KEEPER); rob.root.rotation.set(0, 0, 0);
   rob.dive.position.set(0, ROB_BODY_Y, 0); rob.dive.rotation.set(0, 0, 0);
   rob.face('happy'); rob.apply(RPOSES.ready(0), Infinity, 0);
+  fox.root.rotation.x = 0; fox.root.rotation.z = 0;
+  if (S.gk) {   // Foxino in goal, Rob on the spot
+    fox.root.position.copy(KEEPER); fox.root.rotation.y = 0; fox.apply(KPOSE.ready(0), Infinity, 0);
+    rob.root.position.copy(ROB_START); rob.root.rotation.y = Math.atan2(SPOT.x - ROB_START.x, SPOT.z - ROB_START.z);
+  }
 }
 
 function nextQuestion() {
-  S.qi++;
+  S.qi++; S.gk = S.qi % 2 === 0;   // (2026-11-15, the user: "GK, GS, GK, GS…") keeper on 1, 3, 5, 7, 9; striker on 2, 4, 6, 8, 10
   if (S.qi >= QN) { finish(); return; }
   S.q = S.questions[S.qi];
   resetRound();
@@ -563,8 +570,10 @@ function nextQuestion() {
 function choose(k) {
   if (S.phase !== 'aim' || k < 0 || k >= NB || !S.q.opts[k]) return;
   const q = S.q;
-  S.chosen = k; S.isGoal = !!q.opts[k].ok;
-  S.streak = S.isGoal ? S.streak + 1 : 0; S.power = S.isGoal && S.streak % 3 === 0;   // (2026-11-15) the POWER SHOT
+  S.chosen = k; S.isGoal = !!q.opts[k].ok;   // (in a keeper round: the right word = Foxino dives where the ball goes = a save)
+  S.streak = S.isGoal ? S.streak + 1 : 0; if (!S.isGoal) S.lastPower = 0;
+  // the POWER SHOT: a striker's right answer after three right answers in a row (counting the keeper's saves too)
+  S.power = !S.gk && S.isGoal && S.streak - S.lastPower >= 3; if (S.power) S.lastPower = S.streak;
   S.picks[S.qi] = q.opts[k].text;
   setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {};
   labelEls[k].classList.add('picked');
@@ -576,6 +585,7 @@ function choose(k) {
 
 // work out the ball's flight and Rob's dive before the run-up starts
 function planShot() {
+  if (S.gk) return planKeeperShot();
   const q = S.q, o = q.opts[S.chosen];
   const B = new THREE.Vector3(o.x, o.y, BUB_Z);
   const P0 = SPOT.clone();
@@ -602,6 +612,101 @@ function planShot() {
   }
   SHOT.dive.t0 = SHOT.tContact + 0.06;
   SHOT.dive.t1 = SHOT.tCatch;
+}
+// ---------- the keeper rounds (2026-11-15): Rob takes the penalty and always shoots at the bubble with the RIGHT word;
+// Foxino dives to the bubble the player tapped, so the right word is a save and a wrong one lets the goal in ----------
+function planKeeperShot() {
+  const q = S.q, o = q.opts[q.correct], ch = q.opts[S.chosen];
+  const B = new THREE.Vector3(o.x, o.y, BUB_Z), P0 = SPOT.clone(), mid = P0.clone().lerp(B, 0.5);
+  const side = Math.abs(B.x) > 0.5 ? Math.sign(B.x) : (Math.random() < 0.5 ? -1 : 1);
+  SHOT.P0 = P0; SHOT.P1 = new THREE.Vector3(mid.x - side * 0.5, Math.max(P0.y, B.y) + 0.3, mid.z); SHOT.B = B;
+  SHOT.tRun = T_WAIT; SHOT.tKick = T_WAIT + T_RUN; SHOT.tContact = SHOT.tKick + CONTACT * T_KICK; SHOT.flight = FLIGHT; SHOT.tArrive = SHOT.tContact + FLIGHT;
+  const d = new THREE.Vector3().subVectors(B, SHOT.P1).multiplyScalar(2 / FLIGHT); SHOT.vel = d.clone(); SHOT.speed = d.length(); SHOT.dir = d.clone().normalize();
+  SHOT.dive = { t0: SHOT.tContact + 0.06, t1: SHOT.tArrive, kind: 'gk' };
+  SHOT.fdive = { target: new THREE.Vector3(ch.x, ch.y, KEEPER.z + 0.35), t0: SHOT.tContact + 0.06, t1: SHOT.tArrive };
+}
+// Foxino's keeper poses: crouched with paws out; stretched out with both paws up
+const KPOSE = {
+  ready(t) { const p = POSES.ready(t); p.armL = [-0.3, 0, 1.0]; p.armR = [-0.3, 0, -1.0]; p.elbowL = [-0.7, 0, 0]; p.elbowR = [-0.7, 0, 0]; p.spine = [0.28, 0, 0]; p.head = [-0.18, 0, 0]; return p; },
+  reach() { const p = POSES.stand(0); p.armL = [0, 0, 2.85]; p.armR = [0, 0, -2.85]; p.elbowL = [0, 0, 0]; p.elbowR = [0, 0, 0]; p.legL = [0, 0, 0.32]; p.legR = [0, 0, -0.18]; p.head = [-0.12, 0, 0]; return p; },
+};
+let FOX_REACH = null;   // how high his paws are above his feet with both arms up (measured once on the model)
+function foxHands(out) {
+  const B = fox.bones;
+  if (B && B.LeftHand && B.RightHand) { fox.root.updateMatrixWorld(true); B.LeftHand.getWorldPosition(out); return out.add(B.RightHand.getWorldPosition(_v3)).multiplyScalar(0.5); }
+  return out.copy(fox.root.position).add(_v3.set(0, 1.3, 0.2));
+}
+function foxKeeper(dt) {
+  const t = S.time, st = S.st;
+  if (FOX_REACH == null) { const save = fox.root.position.clone(); fox.root.position.set(0, 0, 0); fox.root.rotation.set(0, 0, 0); fox.apply(KPOSE.reach(), Infinity, 0); FOX_REACH = Math.max(0.9, foxHands(_v2).y); fox.root.position.copy(save); fox.apply(KPOSE.ready(t), Infinity, 0); }
+  fox.root.rotation.y = 0;
+  if (S.phase === 'aim' || st < SHOT.fdive.t0) { fox.root.position.set(KEEPER.x + Math.sin(t * 1.3) * 0.25, 0, KEEPER.z); fox.root.rotation.z = 0; fox.apply(KPOSE.ready(t), 8, dt); return; }
+  const D = SHOT.fdive, T = D.target, start = D.start || (D.start = fox.root.position.clone());
+  const dx = T.x - start.x, ty = T.y;
+  const th = clamp(Math.atan2(-dx, Math.max(ty, 0.2)), -1.45, 1.45), L = FOX_REACH;
+  const gx = T.x + L * Math.sin(th), gy = Math.max(0, ty - L * Math.cos(th));
+  if (st < D.t1 + 0.05) {
+    const e = easeOut(clamp((st - D.t0) / (D.t1 - D.t0), 0, 1));
+    fox.root.position.set(lerp(start.x, gx, e), lerp(0, gy, e) + Math.sin(Math.PI * e) * 0.18, lerp(start.z, T.z, e));
+    fox.root.rotation.z = th * e; fox.apply(KPOSE.reach(), 14 + 20 * e, dt); return;
+  }
+  // down on the grass, then up again: arms high with the ball (a save) or paws on his head (a goal let in)
+  const a = st - D.t1, land = D.land || (D.land = { x: fox.root.position.x, y: fox.root.position.y, rz: fox.root.rotation.z });
+  if (a < 0.45) { const e = easeIn(a / 0.45); fox.root.position.y = lerp(land.y, 0.18 * Math.abs(Math.sin(land.rz)), e); fox.root.rotation.z = lerp(land.rz, Math.sign(land.rz) * Math.min(Math.abs(land.rz) * 1.15, 1.5), e); if (a > 0.4 && !D.thud) { D.thud = 1; sfx.thud(); } fox.apply(KPOSE.reach(), 10, dt); return; }
+  const e = smooth((a - 0.8) / 0.5);
+  fox.root.rotation.z = lerp(Math.sign(land.rz) * Math.min(Math.abs(land.rz) * 1.15, 1.5), 0, e); fox.root.position.y = lerp(0.18 * Math.abs(Math.sin(land.rz)), 0, e);
+  fox.root.position.x = lerp(land.x, land.x * 0.6, e);
+  if (S.isGoal) fox.apply(e < 1 ? KPOSE.reach() : POSES.celebrate(a - 1.3), 8, dt); else fox.apply(e < 1 ? KPOSE.reach() : POSES.sad(a - 1.3), 6, dt);
+}
+// Rob as the penalty taker: a run-up and a strike with his right foot; a dance if he scores, oops if Foxino saves it
+const RKICK = (u) => { const p = RPOSES.ready(0); p.body = [-0.15, 0, 0];
+  const lx = u < 0.3 ? lerp(0, 0.95, smooth(u / 0.3)) : u < 0.45 ? lerp(0.95, -0.5, (u - 0.3) / 0.15) : lerp(-0.5, 0, smooth((u - 0.45) / 0.55));
+  p.legR = [lx, 0, -0.1]; p.footR = [-0.2, 0, 0]; p.legL = [0.1, 0, 0.12]; p.armL = [0, 0, 0.9]; p.armR = [0, 0, -0.6]; return p; };
+const RRUN = (ph) => { const p = RPOSES.ready(0); const s = Math.sin(ph); p.legL = [-0.7 * s, 0, 0.08]; p.legR = [0.7 * s, 0, -0.08]; p.armL = [0.6 * s, 0, 0.3]; p.armR = [-0.6 * s, 0, -0.3]; p.body = [-0.12, 0, 0]; return p; };
+function robShooter(dt) {
+  const t = S.time, st = S.phase === 'shot' ? S.st : 0;
+  rob.dive.rotation.set(0, 0, 0);
+  const bob = (h) => rob.dive.position.set(0, ROB_BODY_Y + h, 0);
+  if (S.phase === 'aim' || st < SHOT.tRun) { rob.root.position.copy(ROB_START); rob.apply(RPOSES.ready(t), 6, dt); bob(0.02 * Math.abs(Math.sin(t * 2.6))); rob.face('focus'); return; }
+  if (st < SHOT.tKick) {
+    const u = (st - SHOT.tRun) / T_RUN, e = u * u * (1.6 - 0.6 * u);
+    rob.root.position.set(lerp(ROB_START.x, KICK_AT.x, e) - Math.sin(Math.PI * e) * 0.25, 0, lerp(ROB_START.z, KICK_AT.z, e));
+    rob.root.rotation.y = angDamp(rob.root.rotation.y, Math.atan2(SHOT.B.x * 0.3 - KICK_AT.x, -KICK_AT.z), 8, dt);
+    const ph = e * Math.PI * 4.2; rob.apply(RRUN(ph), 16, dt); bob(0.06 * Math.abs(Math.sin(ph)));
+    const step = Math.floor(ph / Math.PI); if (step !== S.ev.rstep) { S.ev.rstep = step; sfx.step(); }
+    return;
+  }
+  const u = (st - SHOT.tKick) / T_KICK;
+  if (u < 1.2) { rob.root.position.copy(KICK_AT); rob.apply(RKICK(Math.min(u, 1)), u < 0.1 ? 18 : 40, dt); bob(0); return; }
+  { const k = smooth((u - 1.2) / 1.1); rob.root.position.set(lerp(KICK_AT.x, KICK_AT.x - 2.1, k), 0, lerp(KICK_AT.z, KICK_AT.z + 0.9, k)); }   // (he steps aside so the keeper can be seen)
+  if (S.tRes) {
+    const a = S.time - S.tRes;
+    if (!S.isGoal) { rob.root.rotation.y = angDamp(rob.root.rotation.y, Math.atan2(camera.position.x - rob.root.position.x, camera.position.z - rob.root.position.z), 4, dt); rob.apply(RPOSES.wave(t), 8, dt); bob(0.12 * Math.abs(Math.sin(a * 7))); rob.face('happy'); }
+    else { rob.apply(RPOSES.oops(a), 6, dt); bob(0); if (a > 0.6) rob.face('sad'); }
+  } else { rob.apply(RPOSES.ready(t), 6, dt); bob(0); }
+}
+function onKeeperSave() {
+  S.sub = 'gkSave'; S.tRes = S.time; S.goals++;
+  S.results[S.qi] = 'stop';
+  showBanner('SAVED!', 'goal');
+  sfx.save(); setTimeout(() => sfx.cheer(), 120); S.cheer = 1; S.shake = 0.7;
+  confetti.burst(_v.set(0, 0, 3), 10, 4.5); cfx.cannons();
+  revealCard(true);
+  bubbles.forEach((b, k) => { if (k !== S.chosen) { b.state = 'fade'; b.t = 0; } });
+  labelEls.forEach((l, k) => { if (k !== S.chosen) l.classList.add('wrong'); });
+  fox.face('happy'); rob.face('oops');
+}
+function onConcede() {
+  S.sub = 'goal'; S.tRes = S.time;
+  S.results[S.qi] = 'let';
+  showBanner('GOAL…', 'saved');
+  sfx.save(); setTimeout(() => sfx.aww(), 250); S.cheer = 0.2; S.shake = 0.5;
+  revealCard(false);
+  const r = S.q.correct;
+  labelEls[r].classList.add('right');
+  bubbles.forEach((b, k) => { if (k !== r && k !== S.chosen) { b.state = 'fade'; b.t = 0; } });
+  labelEls.forEach((l, k) => { if (k !== r) l.classList.add('wrong'); });
+  fox.face('sad'); rob.face('happy');
 }
 function bez(t, out) {
   const a = (1 - t) * (1 - t), b = 2 * t * (1 - t), c = t * t;
@@ -633,19 +738,20 @@ function updateShot(dt) {
     // the ball reaches the bubble: pop!
     E.pop = 1;
     ball.position.copy(SHOT.B);
-    const k = S.chosen, b = bubbles[k];
+    const k = S.gk ? S.q.correct : S.chosen, b = bubbles[k];
     b.state = 'pop'; b.t = 0;
     labelEls[k].style.opacity = '0';
     sparks.emit(_v.set(b.x, b.y, BUB_Z), S.isGoal ? ['#ffffff', '#ffe066', '#6fe2ff', '#ff8fc4', '#7dffb0'] : ['#ffffff', '#c9d2e8', '#9aa6c0'], 70, 3.2, BUB_R);
     sfx.pop(S.isGoal);
     if (S.isGoal) { _c.copy(b.mesh.position).project(camera); cfx.pop((_c.x + 1) / 2 * innerWidth, (1 - _c.y) / 2 * innerHeight); }
-    S.sub = S.isGoal ? 'toGoal' : 'toSave';
+    S.sub = S.gk ? (S.isGoal ? 'gkCatch' : 'toGoal') : (S.isGoal ? 'toGoal' : 'toSave');
+    if (S.sub === 'gkCatch') { E.save = 1; onKeeperSave(); }
     BALLV.copy(SHOT.vel);
   }
   // the slow motion while the ball flies at the bubble
-  const sm = S.power ? (t < SHOT.tRun - 0.1 ? 1 : t < SHOT.tContact ? 0.32 : t < SHOT.tContact + 0.05 ? 0.06 : 1) : (t > SHOT.tContact + 0.18 && t < SHOT.tArrive + 0.12 ? 0.45 : 1);
+  const sm = S.power ? (t < SHOT.tKick - 0.3 ? 1 : t < SHOT.tContact ? 0.42 : t < SHOT.tContact + 0.04 ? 0.08 : 1) : (t > SHOT.tContact + 0.18 && t < SHOT.tArrive + 0.12 ? 0.45 : 1);
   S.slow = damp(S.slow, sm, 10, dt / Math.max(S.slow, 0.2));
-  if (S.sub === 'toGoal' && (ball.position.z < -0.15 || t > SHOT.tArrive + 0.5) && !E.goal) { E.goal = 1; onGoal(); }
+  if (S.sub === 'toGoal' && (ball.position.z < -0.15 || t > SHOT.tArrive + 0.5) && !E.goal) { E.goal = 1; if (S.gk) onConcede(); else onGoal(); }
   if (S.sub === 'toSave' && t >= SHOT.tCatch && !E.save) { E.save = 1; onSave(); }
   // the result: then NEXT
   if (S.tRes && !S.nextShown && S.time - S.tRes > (S.isGoal ? 1.5 : 1.8)) {
@@ -653,7 +759,7 @@ function updateShot(dt) {
     ui.next.innerHTML = (S.qi + 1 >= QN ? 'RESULTS' : 'NEXT') + ' <span aria-hidden="true">&#9654;</span>';
     ui.next.classList.remove('hidden');
   }
-  if (S.tRes && S.time - S.tRes > (S.isGoal ? 4.8 : 9)) advance();
+  if (S.tRes && S.time - S.tRes > (S.isGoal ? 2.4 : 9)) advance();   // (2026-11-15) a goal or a save goes on to the next penalty by itself
 }
 
 // ---------- confetti on the screen (like the other Fugio games): a burst from the bubble the moment the right word is hit,
@@ -729,7 +835,7 @@ function advance() {
 }
 
 function finish() {
-  setPhase('end');
+  setPhase('end'); S.gk = false;
   S.q = null;
   ui.hud.classList.add('hidden');
   bubbles.forEach((b) => { b.mesh.visible = false; });
@@ -750,7 +856,7 @@ function finish() {
   // the sentences to learn (the saved penalties), with the right word
   const list = $('missedList'); list.innerHTML = '';
   S.questions.forEach((q, i) => {
-    if (S.results[i] !== 'save') return;
+    if (S.results[i] !== 'save' && S.results[i] !== 'let') return;
     const li = document.createElement('li');
     li.innerHTML = `${hints(q.before)}<b>${esc(q.right)}</b>${hints(q.after)}`;
     list.appendChild(li);
@@ -795,6 +901,8 @@ function animateFox(dt) {
     const J = 0.66, n = Math.floor(S.time / J), u = (S.time / J) % 1, next = n % 2 ? 1 : -1;
     fox.apply(POSES.juggle(u, next, t), 14, dt);
     fox.tailAmp = 1;
+  } else if (S.gk && (p === 'aim' || p === 'shot')) {
+    foxKeeper(dt);
   } else if (p === 'aim') {
     fox.apply(POSES.ready(t), 8, dt);
   } else if (p === 'shot') {
@@ -868,6 +976,7 @@ function sadFox(dt) {
 // ---------- animation: Rob ----------
 function animateRob(dt) {
   const t = S.time, p = S.phase;
+  if (S.gk && (p === 'aim' || p === 'shot')) { robShooter(dt); rob.update(dt, t); return; }
   if (p === 'menu' || p === 'loading' || p === 'locker' || p === 'end' || p === 'aim' || (p === 'shot' && S.st < SHOT.dive.t0)) {
     const sway = Math.sin(t * 1.3) * 0.35;
     const pose = p === 'menu' && Math.sin(t * 0.4) > 0.6 ? RPOSES.wave(t) : RPOSES.ready(t);
@@ -951,6 +1060,7 @@ function animateBall(dt) {
     if (S.power && dt > 0) BALLV.copy(_bp);
     return;
   }
+  if (S.gk && S.isGoal && st >= SHOT.tArrive) { foxHands(_bp); ball.position.lerp(_bp, st < SHOT.tArrive + 0.1 ? 0.5 : 1); return; }
   if (S.sub === 'toSave' || (S.sub === 'save' && !S.isGoal)) {
     if (st < SHOT.tCatch) { ball.position.addScaledVector(BALLV, dt); spinBall(BALLV, dt); return; }
     // in Rob's gloves (and then held up high on his right glove)
