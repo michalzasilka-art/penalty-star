@@ -370,9 +370,24 @@ function playCamPos(a, outPos, outLook) {
   outPos.set(lerp(-0.6, 1.5, k), lerp(2.6, 2.2, k), lerp(17.6, 19.6, k));
   outLook.set(lerp(0, -0.4, k), lerp(0.95, 1.0, k), lerp(3, 4.5, k));
 }
-function fitPlay() {
+// keeper rounds (2026-11-16, the user: "a camera behind you in the net, so you can see the difference clearer"): the camera
+// stands behind the goal (between the LED boards and the first row of fans) and looks out through the net over Foxino's
+// shoulders at the four bubbles and Rob on the spot. A phone screen is narrow, so this camera may open wider (up to 108°
+// top to bottom, still only about 60° across) to keep the outer bubbles in.
+const GK_FIT = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60, fx: 0.5, fy: 0.5 };
+const GK_REQ = [], GK_SOFT = [];
+for (const x of [-3.2, 3.2]) for (const y of [0.1, 2.44]) GK_REQ.push(new THREE.Vector3(x, y, BUB_Z));
+GK_REQ.push(new THREE.Vector3(KICK_AT.x, 0, KICK_AT.z), new THREE.Vector3(KICK_AT.x, 1.6, KICK_AT.z));
+GK_SOFT.push(new THREE.Vector3(KEEPER.x, 0, KEEPER.z), new THREE.Vector3(KEEPER.x, 1.2, KEEPER.z));   // (the posts may go off the sides)
+function keeperCamPos(a, outPos, outLook) {
+  const P = window.PS_GKCAM || [0, 2.8, -5.1, 0, 1.0, 5];
+  const k = smooth((a - 0.75) / 0.85);   // (a wide screen can come closer, into the net's shadow)
+  outPos.set(P[0], lerp(P[1], 2.5, k), lerp(P[2], -4.3, k)); outLook.set(P[3], P[4], P[5]);
+}
+function fitPlay() { fitCam(FIT, playCamPos, REQ, SOFT); fitCam(GK_FIT, keeperCamPos, GK_REQ, GK_SOFT); }
+function fitCam(FIT, camPos, REQ, SOFT) {
   const a = innerWidth / innerHeight;
-  playCamPos(a, FIT.pos, FIT.look);
+  camPos(a, FIT.pos, FIT.look);
   const f = _v.subVectors(FIT.look, FIT.pos).normalize();
   const r = _v2.crossVectors(f, UP).normalize();
   const u = _v3.crossVectors(r, f);
@@ -391,7 +406,7 @@ function fitPlay() {
   const bR = proj(REQ), bA = proj([...REQ, ...SOFT]);
   const tR = need(bR), tA = need(bA);
   let T = Math.min(tA, tR * (a > 1.3 ? 1.45 : 1.7)), b = T >= tA * 0.999 ? bA : bR;
-  T = clamp(T, Math.tan(THREE.MathUtils.degToRad(6)), Math.tan(THREE.MathUtils.degToRad(42)));
+  T = clamp(T, Math.tan(THREE.MathUtils.degToRad(6)), Math.tan(THREE.MathUtils.degToRad(FIT === GK_FIT ? 54 : 42)));
   FIT.fov = THREE.MathUtils.radToDeg(2 * Math.atan(T));
   const sx = (safe.l + safe.r) / 2, sy = (safe.t + safe.b) / 2;
   FIT.fx = sx - ((b.x0 + b.x1) / 2) / (2 * T * a);
@@ -400,6 +415,12 @@ function fitPlay() {
   FIT.T = T;
 }
 function rigPlay(out) {
+  if (S.gk && (S.phase === 'aim' || S.phase === 'shot')) {   // in goal: behind the net; a little push in as Rob shoots
+    out.pos.copy(GK_FIT.pos); out.look.copy(GK_FIT.look); out.fov = GK_FIT.fov; out.fx = GK_FIT.fx; out.fy = GK_FIT.fy;
+    const push = S.phase === 'shot' ? smooth((S.st - (SHOT.tContact || 99) + 0.3) / 0.6) : 0;
+    if (push > 0) { out.pos.z += 0.9 * push; out.pos.y -= 0.35 * push; out.fov *= 1 - 0.03 * push; }
+    return;
+  }
   out.pos.copy(FIT.pos); out.look.copy(FIT.look); out.fov = FIT.fov; out.fx = FIT.fx; out.fy = FIT.fy;
   // a small push toward the goal while the ball flies
   const push = S.phase === 'shot' ? smooth((S.st - (SHOT.tContact || 99) + 0.1) / 0.6) * (S.sub === 'goal' || S.sub === 'save' ? 1 : 1) : 0;
