@@ -335,3 +335,6 @@ body.remote #cardKick .role.gs, body.remote #cardKick .role.gk { background: var
 body.remote #cardKick .vs { font-style: normal; margin-left: 6px; opacity: .6; }
 body.remote #note b { color: var(--purple); }
 body.remote .blabel span { white-space: nowrap; }
+
+/* (2026-11-17) inside a Foxino Sports playlist: no PLAY AGAIN or word button at the end (the lobby goes on) */
+body.list #againBtn, body.list #packBtn2 { display: none; }

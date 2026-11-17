@@ -6,7 +6,7 @@ import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
 import { loadFoxino, KIT_PARTS } from './foxino-glb.js?v=3';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
-import { makeStadium, loadStadiumModels, dressModel } from './stadium.js';
+import { makeStadium, loadStadiumModels, dressModel } from './stadium.js?v=2';
 import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
@@ -21,6 +21,10 @@ const pick = (a) => a[Math.floor(Math.random() * a.length)];
 // kicks (two players' names, the question, then the shot), the phones answer, no menus here
 const REMOTE = /[?&]remote=1/.test(location.search), RSLOT = +(new URLSearchParams(location.search).get('slot') || 0);
 if (REMOTE) document.body.classList.add('remote');
+// (2026-11-17) ?list=1: one of the sports picked in the Foxino Sports lobby: the game starts at once, and at the end it tells
+// the lobby the result ({fs: 'finished', goals, stars}); the lobby goes on to the next sport
+const LIST = /[?&]list=1/.test(location.search);
+if (LIST) document.body.classList.add('list');
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
@@ -951,6 +955,7 @@ function finish() {
   ui.end.scrollTop = 0;
   $('againBtn').classList.add('pulse');
   if (stars >= 2) { S.cheer = 1; sfx.cheer(); confetti.burst(_v.set(LOBBY.x, 0, LOBBY.z - 1), 5, 4); }
+  if (LIST && window.parent !== window) window.parent.postMessage({ fs: 'finished', goals: S.goals, stars, of: QN }, '*');
   fox.face('happy');
 }
 function renderEndBest() {
@@ -1338,6 +1343,7 @@ function init() {
   setTimeout(() => {
     ui.loading.classList.add('gone');
     if (REMOTE) { window.parent.postMessage({ fs: 'ready', slot: RSLOT }, '*'); window.PS.ready = true; return; }
+    if (LIST) { window.PS.ready = true; unlock(); startGame(); return; }
     ui.start.classList.remove('hidden');
     $('playBtn').classList.add('pulse');
     window.PS.ready = true;

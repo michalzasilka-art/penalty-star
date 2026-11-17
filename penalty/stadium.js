@@ -10,7 +10,7 @@ import { GLTFLoader } from './lib/GLTFLoader.js';
 const STADIUM_FILES = ['stadium-main', 'stadium-side', 'stadium-far', 'stadium-corners', 'floodlight', 'camera-crew', 'mascot-banner', 'fan-1', 'fan-2', 'fan-3', 'fan-4', 'fan-5', 'fan-6'];
 export async function loadStadiumModels() {
   const L = new GLTFLoader(), out = {};
-  await Promise.all(STADIUM_FILES.map(async (n) => { out[n] = (await L.loadAsync(`models/${n}.glb?v=1`)).scene; }));
+  await Promise.all(STADIUM_FILES.map(async (n) => { out[n] = (await L.loadAsync(new URL(`models/${n}.glb?v=1`, import.meta.url).href)).scene   /* (2026-11-17: found next to this module, so the Foxino Sports lobby can load it too) */; }));
   return out;
 }
 // Main (vertex colours) stays lit; Glow becomes full-bright
