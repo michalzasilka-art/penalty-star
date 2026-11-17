@@ -62,6 +62,56 @@ scene.add(new THREE.HemisphereLight(0xe4f0ff, 0x5a8a45, 1.25));
 const key = new THREE.DirectionalLight(0xfff1de, 2.3); key.position.set(9, 22, 26); scene.add(key);
 const rimL = new THREE.DirectionalLight(0xffe0b8, 1.3); rimL.position.set(-14, 12, -24); scene.add(rimL);
 
+/* (2026-11-17, the user: "put this lighting setting you did in Adventures to ... penalties") the Foxino Adventures look:
+   soft sun shadows over the goal mouth, then ONE full-screen pass with a cheap ambient occlusion (darker creases, the foot of
+   things), a soft-focus background (the far stands), a gentle pastel grade and a light vignette. GFX.level 2 = everything,
+   1 = shadows + grade, 0 = the old direct drawing; a slow device steps down a level before it lowers the resolution. */
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const GFX = { level: /[?&]gfx=0/.test(location.search) ? 0 : 2, t: 0 };
+{ key.castShadow = true; key.shadow.mapSize.set(2048, 2048); const c = key.shadow.camera; c.left = -14; c.right = 14; c.top = 14; c.bottom = -14; c.near = 1; c.far = 100; c.updateProjectionMatrix();
+  key.shadow.bias = -.0005; key.shadow.normalBias = .03; key.shadow.radius = 4; key.userData.dir = key.position.clone().normalize(); key.target.position.set(0, 0, 5); key.position.copy(key.target.position).addScaledVector(key.userData.dir, 50); scene.add(key.target); }
+function shadowSweep(sc) { sc.traverse((o) => { if (!o.isMesh || o.userData.sh) return; o.userData.sh = 1; const m = Array.isArray(o.material) ? o.material[0] : o.material;
+  if (!m || m.isShaderMaterial && !m.lights || m.isMeshBasicMaterial || m.isSpriteMaterial || m.isPointsMaterial) return;
+  o.receiveShadow = true; if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); const r = o.geometry.boundingSphere ? o.geometry.boundingSphere.radius * Math.max(o.scale.x, o.scale.y, o.scale.z) : 1;
+  o.castShadow = !m.transparent && !o.isInstancedMesh && (r < 30 || o.isSkinnedMesh); }); }
+const POST = { rt: null, mat: null, sc: null, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), sz: new THREE.Vector2() };
+function postInit(w, h) {
+  const dt = new THREE.DepthTexture(w, h); dt.type = THREE.UnsignedIntType;
+  POST.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4, depthTexture: dt, depthBuffer: true });
+  POST.mat = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false,
+    uniforms: { tC: { value: POST.rt.texture }, tD: { value: dt }, uRes: { value: new THREE.Vector2(w, h) }, uNear: { value: .1 }, uFar: { value: 1200 }, uAO: { value: 1 }, uBlur: { value: 1 }, uFocus: { value: 12 } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform sampler2D tC, tD; uniform vec2 uRes; uniform float uNear, uFar, uAO, uBlur, uFocus; varying vec2 vUv;
+      float lin(vec2 uv) { float z = texture2D(tD, uv).x * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
+      void main() {
+        vec2 px = 1.0 / uRes; float d = lin(vUv); vec3 c = texture2D(tC, vUv).rgb;
+        float bl = uBlur * smoothstep(uFocus * 1.6, uFocus * 5.0, d) * (1.0 - step(uFar * .97, d) * .5);
+        if (bl > .01) { vec3 acc = c; float r = 2.6 * bl; for (int i = 0; i < 8; i++) { float a = float(i) * .785398; acc += texture2D(tC, vUv + vec2(cos(a), sin(a)) * px * r * (1.0 + float(i - (i / 2) * 2))).rgb; } c = mix(c, acc / 9.0, bl); }
+        if (uAO > .01 && d < 120.0) { float occ = 0.0; float rad = clamp(18.0 / d, 2.0, 22.0);
+          for (int i = 0; i < 10; i++) { float a = float(i) * 2.399963 + .5; float rr = rad * (.35 + .65 * fract(float(i) * .618)); vec2 o = vec2(cos(a), sin(a)) * rr * px; float dd = lin(vUv + o);
+            float diff = d - dd; occ += smoothstep(.02, .35, diff) * (1.0 - smoothstep(.6, 2.2, diff)); }
+          occ = clamp(occ / 10.0, 0.0, 1.0) * (1.0 - smoothstep(70.0, 120.0, d)); c *= mix(vec3(1.0), vec3(.62, .6, .78), occ * uAO * .85); }
+        float L = dot(c, vec3(.299, .587, .114));
+        c = mix(vec3(L), c, 1.04);
+        c += vec3(.012, .01, .03) * (1.0 - smoothstep(0.0, .35, L));
+        c *= mix(vec3(1.0), vec3(1.03, 1.01, .96), smoothstep(.3, 1.0, L));
+        vec2 q = vUv - .5; c *= 1.0 - dot(q, q) * .3;
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }` });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), POST.mat); quad.frustumCulled = false; POST.sc = new THREE.Scene(); POST.sc.add(quad);
+}
+function drawFrame() {
+  const G = GFX.level; renderer.shadowMap.enabled = G > 0; key.castShadow = G > 0 && camera.position.y > -20;   // (no sun shadows down in the Locker room)
+  if (G > 0 && (GFX.t++ % 30) === 0) shadowSweep(scene);
+  if (G === 0) { renderer.render(scene, camera); return; }
+  renderer.getDrawingBufferSize(POST.sz); const w = Math.max(1, POST.sz.x | 0), h = Math.max(1, POST.sz.y | 0);
+  if (!POST.rt) postInit(w, h); else if (POST.rt.width !== w || POST.rt.height !== h) { POST.rt.setSize(w, h); POST.mat.uniforms.uRes.value.set(w, h); }
+  const U = POST.mat.uniforms; U.uAO.value = G > 1 ? 1 : 0; U.uBlur.value = G > 1 ? .75 : 0; U.uFocus.value = Math.max(3, camera.position.distanceTo(CAM.look) * 1.15); U.uNear.value = camera.near; U.uFar.value = camera.far;
+  renderer.setRenderTarget(POST.rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(POST.sc, POST.cam);
+}
+
 // (2026-11-15) the Blender stadium; the code-built one if its models can't load
 let STADIUM_MODELS = null; try { STADIUM_MODELS = await loadStadiumModels(); } catch (e) { console.warn('Stadium models did not load; using the code-built stadium', e); }
 const stadium = makeStadium(scene, STADIUM_MODELS);
@@ -1203,11 +1253,12 @@ function frame(now) {
   confetti.update(dt);
   sparks.update(dt);
   S.shake = Math.max(0, S.shake - rdt * 2.4);
-  renderer.render(scene, camera);
+  drawFrame();
   // lower the resolution on slow devices (never raise it again)
   if (rdt > 0 && !S.paused) { frames++; if (rdt > 1 / 38) slowFrames++; }
   if (frames >= 90) {
-    if (slowFrames > 45 && pr > 1) { pr = Math.max(1, pr - 0.25); resize(); }
+    if (slowFrames > 45 && GFX.level > 0) GFX.level--;   // (the new look goes first, then the resolution)
+    else if (slowFrames > 45 && pr > 1) { pr = Math.max(1, pr - 0.25); resize(); }
     frames = 0; slowFrames = 0;
   }
 }
@@ -1234,7 +1285,7 @@ window.PS = {
     phase: S.phase, sub: S.sub, q: S.qi + 1, total: QN, goals: S.goals, results: S.results.slice(),
     sentence: S.q ? `${S.q.before}___${S.q.after}` : null, right: S.q && S.q.right,
     options: S.q && S.q.opts.map((o) => o.text), spots: S.q && S.q.opts.map((o) => [o.x, o.y]), correct: S.q ? S.q.correct : -1,
-    chosen: S.chosen, nextShown: S.nextShown, net: +stadium.net.dent.toFixed(3), st: +S.st.toFixed(2), since: S.tRes ? +(S.time - S.tRes).toFixed(2) : 0, time: +S.time.toFixed(2), keeper: rob.expression, fov: +camera.fov.toFixed(2), pixelRatio: pr,
+    chosen: S.chosen, nextShown: S.nextShown, net: +stadium.net.dent.toFixed(3), st: +S.st.toFixed(2), since: S.tRes ? +(S.time - S.tRes).toFixed(2) : 0, time: +S.time.toFixed(2), keeper: rob.expression, fov: +camera.fov.toFixed(2), pixelRatio: pr, gfx: GFX.level,
     packs: packIds.slice(), endStars: S.endStars,
   }),
   start: (ids) => { if (ids) { packIds = ids; renderPack(); } unlock(); startGame(); return true; },
@@ -1247,6 +1298,7 @@ window.PS = {
   next: () => { advance(); return true; },
   bubbles: () => labelEls.map((el, k) => ({ word: el.dataset.word, right: S.q ? k === S.q.correct : false, opacity: +el.style.opacity, rect: el.getBoundingClientRect().toJSON() })),
   timeScale: (k) => { S.timeScale = k; },
+  gfx: (l) => { GFX.level = l; return true; },
   pause: (b) => { S.paused = !!b; },
   info: () => ({ triangles: renderer.info.render.triangles, calls: renderer.info.render.calls, programs: renderer.info.programs.length, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }),
   closeup: (who, opts = {}) => { S.closeup = who ? { who, ...opts } : null; camSnap = true; ui.start.classList.toggle('hidden', !!who || S.phase !== 'menu'); return true; },
