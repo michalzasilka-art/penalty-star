@@ -324,6 +324,8 @@ $('packBtn').onclick = openPicker;
 $('packBtn2').onclick = openPicker;
 $('leaveBtn').onclick = () => {
   sfx.click();
+  // (2026-11-17) opened from the Foxino Sports menu: back to that menu
+  if (/[?&]from=sports/.test(location.search)) { location.href = '/sports/'; return; }
   if (window.parent !== window) window.parent.postMessage({ fugio: 'leave' }, '*'); else location.href = '/';
 };
 const muteBtn = $('muteBtn');
