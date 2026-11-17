@@ -4,7 +4,7 @@
 import * as THREE from './lib/three.module.min.js';
 import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
-import { loadFoxino, KIT_PARTS } from './foxino-glb.js?v=2';
+import { loadFoxino, KIT_PARTS } from './foxino-glb.js?v=3';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
 import { makeStadium, loadStadiumModels, dressModel } from './stadium.js';
 import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
@@ -17,6 +17,10 @@ const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const hints = (t) => esc(t).replace(/\(([^)]*)\)/g, '<i>($1)</i>');
 const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
+// (2026-11-17) Foxino Sports: ?remote=1 is the classroom version inside the teacher's screen; the teacher's page sends the
+// kicks (two players' names, the question, then the shot), the phones answer, no menus here
+const REMOTE = /[?&]remote=1/.test(location.search), RSLOT = +(new URLSearchParams(location.search).get('slot') || 0);
+if (REMOTE) document.body.classList.add('remote');
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
@@ -282,7 +286,7 @@ const ICON = {
 };
 function renderShoot(el, results, now = -1) {
   el.innerHTML = '';
-  for (let i = 0; i < QN; i++) {
+  for (let i = 0; i < (REMOTE ? S.total || 6 : QN); i++) {
     const s = document.createElement('i');
     const r = results[i];
     s.className = 'slot' + (r ? ' ' + r : '') + (i === now ? ' now' : '');
@@ -380,6 +384,7 @@ function flash(cb, hold = 120) {
 }
 
 function setCard(q) {
+  if (REMOTE) return remoteCard(q);
   ui.kick.innerHTML = `PENALTY ${S.qi + 1} / ${QN} <em class="role ${S.gk ? 'gk' : 'gs'}">${S.gk ? 'KEEPER' : 'STRIKER'}</em>`;
   ui.sentence.innerHTML = `${hints(q.before)}<span class="gap">&nbsp;</span>${hints(q.after)}`;
   ui.note.className = ''; ui.note.innerHTML = S.qi < 2 ? (S.gk ? 'You are in goal! Rob shoots at the right word: tap it to dive there!' : 'Your turn to shoot: tap the bubble with the right word!') : '&nbsp;';
@@ -391,6 +396,7 @@ function revealCard(goal) {
   ui.sentence.innerHTML = `${hints(q.before)}<span class="gap ok">${esc(q.right)}</span>${hints(q.after)}`;
   if (goal) { ui.note.className = 'good'; ui.note.innerHTML = pick(['Great!', 'Brilliant!', 'Super!', 'Well done!', 'Yes!']) + ' ✓'; }
   else { ui.note.className = 'bad'; ui.note.innerHTML = `Not <s>${esc(q.opts[S.chosen].text)}</s> · the right word is <b>${esc(q.right)}</b>`; }
+  if (REMOTE && S.rnote) { ui.note.className = goal ? 'good' : 'bad'; ui.note.innerHTML = S.rnote; }
   renderShoot(ui.shoot, S.results, -1);
   const el = ui.shoot.children[S.qi]; if (el) el.classList.add('pop');
 }
@@ -827,10 +833,11 @@ function updateShot(dt) {
   // the result: then NEXT
   if (S.tRes && !S.nextShown && S.time - S.tRes > (S.isGoal ? 1.5 : 1.8)) {
     S.nextShown = true;
+    if (REMOTE) { window.parent.postMessage({ fs: 'done', slot: RSLOT, goal: S.isGoal }, '*'); return; }
     ui.next.innerHTML = (S.qi + 1 >= QN ? 'RESULTS' : 'NEXT') + ' <span aria-hidden="true">&#9654;</span>';
     ui.next.classList.remove('hidden');
   }
-  if (S.tRes && S.time - S.tRes > (S.isGoal ? 2.4 : 9)) advance();   // (2026-11-15) a goal or a save goes on to the next penalty by itself
+  if (!REMOTE && S.tRes && S.time - S.tRes > (S.isGoal ? 2.4 : 9)) advance();   // (2026-11-15) a goal or a save goes on to the next penalty by itself
 }
 
 // ---------- confetti on the screen (like the other Fugio games): a burst from the bubble the moment the right word is hit,
@@ -1263,6 +1270,62 @@ function frame(now) {
   }
 }
 
+// ---------- (2026-11-17) Foxino Sports remote control ----------
+// fs:'kick' {n, total, shooter, keeper, sc: [shooter colour, keeper colour], results, q: {before, after, right, words}}
+// fs:'shot' {k: the shooter's bubble (-1 = too slow), goal, note} · fs:'idle' · the game answers fs:'ready' and fs:'done'
+function remoteCard(q) {
+  const R = S.rinfo || {}, c = R.sc || ['#ffcd1c', '#48d8ff'];
+  ui.kick.innerHTML = `KICK ${S.qi + 1} / ${S.total} <em class="role gs" style="--rc:${c[0]}">${esc(R.shooter || '')}</em><em class="vs">vs</em><em class="role gk" style="--rc:${c[1]}">${esc(R.keeper || '')}</em>`;
+  ui.sentence.innerHTML = `${hints(q.before)}<span class="gap">&nbsp;</span>${hints(q.after)}`;
+  ui.note.className = ''; ui.note.innerHTML = `<b>${esc(R.shooter || '')}</b> shoots · <b>${esc(R.keeper || '')}</b> saves · answer on your phones!`;
+  ui.next.classList.add('hidden');
+  renderShoot(ui.shoot, S.results, S.qi);
+}
+function remoteKick(m) {
+  if (RSLOT === 0) unlock();
+  confetti.clear();
+  S.total = m.total || 6; S.qi = m.n | 0; S.results = (m.results || []).slice(); S.rinfo = m; S.rnote = ''; S.gk = false; S.power = false;
+  const w = m.q.words.slice(0, NB), up = Math.random() < 0.5 ? 1 : 0, off = Math.floor((NB - w.length) / 2);
+  const opts = w.map((o, k) => ({ text: o.text, ok: !!o.ok, x: COLS[k + off] + (Math.random() - 0.5) * 0.18, y: ROWS[(k + up) % 2] }));
+  S.q = { before: m.q.before, after: m.q.after, right: m.q.right, opts, correct: opts.findIndex((o) => o.ok) };
+  S.questions = []; S.questions[S.qi] = S.q;
+  bubbles.forEach((b) => { b.mesh.visible = false; }); labelEls.forEach((l) => { l.style.opacity = '0'; l.className = 'blabel'; });
+  ui.start.classList.add('hidden'); ui.end.classList.add('hidden'); $('locker').classList.add('hidden'); ui.hud.classList.remove('hidden');
+  resetRound(); setPhase('aim'); setCard(S.q);
+  measureSafe(); fitPlay(); camSnap = true;
+  opts.forEach((o, k) => {
+    const b = bubbles[k];
+    b.mesh.visible = true; b.mesh.scale.setScalar(0.001);
+    Object.assign(b, { state: 'in', t: -0.25 - k * 0.12, x: o.x, y: o.y, alpha: 1, glow: 0, hot: 0 });
+    b.u.uGlow.value = 0; b.u.uAlpha.value = 1; b.u.uHot.value = 0;
+    labelEls[k].firstChild.textContent = o.text; labelEls[k].dataset.word = o.text;
+  });
+  sfx.whistle();
+  setTimeout(() => { if (S.phase === 'aim') sfx.bubble(); }, 250);
+}
+function remoteShot(m) {
+  if (S.phase !== 'aim' || !S.q) return;
+  const n = S.q.opts.length;
+  let k = m.k | 0;
+  if (!(m.k >= 0 && k < n)) { const wr = S.q.opts.map((o, i) => i).filter((i) => i !== S.q.correct); k = wr[Math.floor(Math.random() * wr.length)]; }
+  S.rnote = m.note || '';
+  S.chosen = k; S.isGoal = !!m.goal && k === S.q.correct; S.picks[S.qi] = S.q.opts[k].text;
+  setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {};
+  labelEls[k].classList.add('picked'); bubbles[k].hot = 1;
+  sfx.pick(); sfx.whistle(false, 0.12);
+  planShot();
+}
+function remoteIdle() {
+  confetti.clear();
+  ui.hud.classList.add('hidden'); bubbles.forEach((b) => { b.mesh.visible = false; }); labelEls.forEach((l) => { l.style.opacity = '0'; });
+  S.q = null; S.gk = false; resetRound(); setPhase('menu');
+  fox.root.position.copy(LOBBY); fox.root.rotation.y = 0; ball.position.set(LOBBY.x + 0.42, BALL_R, LOBBY.z + 0.25); camSnap = true;
+}
+if (REMOTE) addEventListener('message', (e) => {
+  const m = e.data; if (!m || typeof m !== 'object' || !m.fs) return;
+  if (m.fs === 'kick') remoteKick(m); else if (m.fs === 'shot') remoteShot(m); else if (m.fs === 'idle') remoteIdle();
+});
+
 // ---------- start ----------
 function init() {
   renderPack();
@@ -1272,6 +1335,7 @@ function init() {
   $('loadFill').style.width = '100%';
   setTimeout(() => {
     ui.loading.classList.add('gone');
+    if (REMOTE) { window.parent.postMessage({ fs: 'ready', slot: RSLOT }, '*'); window.PS.ready = true; return; }
     ui.start.classList.remove('hidden');
     $('playBtn').classList.add('pulse');
     window.PS.ready = true;

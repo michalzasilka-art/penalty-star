@@ -7,7 +7,8 @@ import { GLTFLoader } from './lib/GLTFLoader.js';
 import { toon, damp } from './mat.js';
 import { blankPose, POSES } from './foxino.js';
 
-const URL = 'models/foxino-football.glb?v=1';
+// (2026-11-17) the files are found next to this module, so Foxino Sports (/sports/…) can load him too
+const FOX_URL = new URL('models/foxino-football.glb?v=1', import.meta.url).href, MASK_URL = new URL('models/kit-mask.png?v=1', import.meta.url).href;
 const HEIGHT = 1.3;          // ear tips, in metres (the code-built Foxino was about 1.45 with his longer body)
 
 // old joint -> Mixamo bone, and the old joint's parent
@@ -26,7 +27,7 @@ const STRAIGHT = new Set(['armL', 'elbowL', 'armR', 'elbowR', 'legL', 'kneeL', '
 const DOWN = new THREE.Vector3(0, -1, 0);
 
 export async function loadFoxino() {
-  const gltf = await new GLTFLoader().loadAsync(URL);
+  const gltf = await new GLTFLoader().loadAsync(FOX_URL);
   return makeFoxinoGLB(gltf.scene);
 }
 
@@ -39,7 +40,7 @@ async function kitSetup(mat) {
   const src = mat.map && mat.map.image; if (!src) return null;
   const w = src.width, h = src.height, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(src, 0, 0); const base = g.getImageData(0, 0, w, h);
-  const mi = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'models/kit-mask.png?v=1'; });
+  const mi = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = MASK_URL; });
   const mc = document.createElement('canvas'); mc.width = w; mc.height = h; const mg = mc.getContext('2d', { willReadFrequently: true }); mg.imageSmoothingEnabled = false; mg.drawImage(mi, 0, 0, w, h);
   const md = mg.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h), sum = new Float64Array(6), cnt = new Float64Array(6), d = base.data;
   for (let i = 0; i < w * h; i++) { const k = Math.round(md[i * 4] / 40); mask[i] = k > 5 ? 0 : k; if (k > 0 && k <= 5) { sum[k] += 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; cnt[k]++; } }
