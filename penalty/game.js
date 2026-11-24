@@ -5,8 +5,8 @@ import * as THREE from './lib/three.module.min.js';
 import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
 import { loadFoxino, KIT_PARTS } from './foxino-glb.js?v=3';
-import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
-import { makeStadium, loadStadiumModels, dressModel } from './stadium.js?v=4';
+import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js?v=2';
+import { makeStadium, loadStadiumModels, dressModel } from './stadium.js?v=5';
 import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
@@ -137,14 +137,15 @@ window.FP = { scene, camera, renderer, stadium };   // (test hook: the frame's t
   if (await loadXmasKit(new GLTFLoaderLR())) {
     for (const s of [-1, 1]) {
       placeKit(stadium.root, 'XmasTree_Big', s * 10.6, -3.2, { rot: s * 0.5, s: 1.7 }); placeKit(stadium.root, 'XmasTree_Small', s * 15.5, -3.5, { rot: s, s: 1.4 });
-      placeKit(stadium.root, 'XmasTree_Big', s * 36.2, 22, { rot: s, s: 1.2 }); placeKit(stadium.root, 'XmasTree_Big', s * 36.2, 46, { rot: -s, s: 1.2 });
+      placeKit(stadium.root, 'XmasTree_Small', s * 36.2, 22, { rot: s, s: 1.9 }); placeKit(stadium.root, 'XmasTree_Small', s * 36.2, 46, { rot: -s, s: 1.9 });   // (small trees here since 2026-11-24: Penalties under 100k)
       placeKit(stadium.root, 'Snowman', s * 24, 6.5, { rot: -s * 1.2 }); placeKit(stadium.root, 'Snowman', s * 36, 33, { rot: -s * Math.PI / 2 });
       placeKit(stadium.root, 'Lantern', s * 20.5, -2.4, { rot: 0 }); placeKit(stadium.root, 'Lantern', s * 36.5, 10, { rot: -s * Math.PI / 2 });
       placeKit(stadium.root, 'CandyCane', s * 11.8, -2.6, { rot: s * 0.3 }); }
     for (const x of [-2.745, -0.915, 0.915, 2.745]) { const g = placeKit(stadium.root, 'Garland', x, 0.02, { y: 2.44 + 0.1 }); if (g) g.scale.set(0.915, 1.25, 1.25); }   // (a fir garland with bulbs along the crossbar: in view from both ends)
-    for (const [x, s2] of [[-24, 3.0], [-10, 3.3], [10, 3.3], [24, 3.0]]) placeKit(stadium.root, 'XmasTree_Big', x, 104, { rot: x * 0.1, s: s2 });   // (big trees in front of the far stand: the keeper looks down the pitch at them)
+    for (const [x, s2] of [[-24, 4.4], [-10, 3.3], [10, 3.3], [24, 4.4]]) placeKit(stadium.root, Math.abs(x) > 15 ? 'XmasTree_Small' : 'XmasTree_Big', x, 104, { rot: x * 0.1, s: s2 });   // (big trees in front of the far stand: the keeper looks down the pitch at them)
     for (const [x, y, s3] of [[0, 30, 7], [-30, 24, 4.5], [30, 24, 4.5]]) { const st = placeKit(stadium.root, 'StarLight', x, 121, { y, rot: Math.PI, s: s3 }); if (st) st.traverse((o) => { if (o.isMesh) o.material.fog = false; }); }   // (glowing stars over the far stand, in the keeper's sky)
     placeKit(stadium.root, 'Gift_A', -7.3, -3.0, { rot: 0.4 }); placeKit(stadium.root, 'Gift_B', 7.5, -2.8, { rot: -0.3 }); placeKit(stadium.root, 'Gift_C', -6.7, -3.7, { rot: 1.1 }); placeKit(stadium.root, 'Gift_A', 8.1, -3.6, { rot: 2 });
+    stadium.root.traverse((o) => { if (o.isMesh && /^(Xmas|Snowman|Lantern|CandyCane|Garland|StarLight|Gift|Sleigh|Snow(Drift|Pile))/.test((o.parent && o.parent.name) || '')) { o.castShadow = false; o.userData.sh = 1; } });   // (2026-11-24: the Christmas props cast no sun shadow: the keeper's frame stays under 100k)
     placeKit(stadium.root, 'Sleigh', -30, -2.6, { rot: 0.5 }); placeKit(stadium.root, 'SnowDrift_A', 25, -3.4); placeKit(stadium.root, 'SnowDrift_B', -21.5, -3.6, { rot: 1.5 }); placeKit(stadium.root, 'SnowPile', 31, -3.2);
   }
 })().catch((e) => console.warn('xmas', e));
@@ -1289,6 +1290,7 @@ function frame(now) {
   updateBlobs();
   updateCrowd(dt);
   stadium.update(dt, S.time); wind.update(dt, S.time);
+  if (stadium.look) stadium.look(camera);   // (2026-11-24: hide the stands the camera looks away from)
   if (XM.snow) XM.snow.update(now / 1000, camera, pr); for (const l of XM.lights) l.update(now / 1000);
   confetti.update(dt);
   sparks.update(dt);

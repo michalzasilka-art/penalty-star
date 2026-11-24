@@ -8,9 +8,10 @@ import { GLTFLoader } from './lib/GLTFLoader.js';
 // ---------- (2026-11-15) the Blender stadium (Claudee RCC, blender/stadium): the bowl, its skyline, floodlights, the crowd ----------
 // loaded before the stadium is built; if anything is missing the code-built stadium below is used instead
 const STADIUM_FILES = ['stadium-main', 'stadium-side', 'stadium-far', 'stadium-corners', 'floodlight', 'camera-crew', 'mascot-banner', 'fan-1', 'fan-2', 'fan-3', 'fan-4', 'fan-5', 'fan-6'];
+const SLIM = new Set(['stadium-main', 'stadium-side', 'stadium-far', 'stadium-corners', 'floodlight']);   // (2026-11-24: RCC's slim stadium, 69.3k -> 25.0k tris as placed)
 export async function loadStadiumModels() {
   const L = new GLTFLoader(), out = {};
-  await Promise.all(STADIUM_FILES.map(async (n) => { out[n] = (await L.loadAsync(new URL(`models/${n}.glb?v=1`, import.meta.url).href)).scene   /* (2026-11-17: found next to this module, so the Foxino Sports lobby can load it too) */; }));
+  await Promise.all(STADIUM_FILES.map(async (n) => { out[n] = (await L.loadAsync(new URL(`models/${n}.glb?v=${SLIM.has(n) ? 2 : 1}`, import.meta.url).href)).scene   /* (2026-11-17: found next to this module, so the Foxino Sports lobby can load it too) */; }));
   return out;
 }
 // Main (vertex colours) stays lit; Glow becomes full-bright
@@ -60,7 +61,9 @@ function makeFanCrowd(fanScenes, seats, uniforms) {
       fragmentShader: `varying vec3 vC; varying float vL; void main(){ gl_FragColor = vec4(vC * vL, 1.0);
         #include <colorspace_fragment>
       }` });
-    const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; group.add(m);
+    // (2026-11-24) a bounding sphere round all its seats (plus room for the cheering), so the fans are skipped when the camera looks away from them
+    const bb = new THREE.Box3(); list.forEach((q) => bb.expandByPoint(new THREE.Vector3(q.x, q.y, q.z))); bb.expandByScalar(1.6); geo.boundingSphere = bb.getBoundingSphere(new THREE.Sphere());
+    const m = new THREE.Mesh(geo, mat); group.add(m);
   });
   return group;
 }
@@ -286,7 +289,7 @@ function crowdAtlas() {
   return t;
 }
 
-function makeCrowd(seats) {
+function makeCrowd(seats, shared = null) {
   const N = seats.length;
   const geo = new THREE.InstancedBufferGeometry();
   const quad = new THREE.PlaneGeometry(0.62, 0.92); quad.translate(0, 0.46, 0);
@@ -304,7 +307,7 @@ function makeCrowd(seats) {
   geo.setAttribute('aCol', new THREE.InstancedBufferAttribute(col, 3));
   geo.setAttribute('aRnd', new THREE.InstancedBufferAttribute(rnd, 4));
   geo.instanceCount = N;
-  const uniforms = { uTime: { value: 0 }, uCheer: { value: 0 }, uWave: { value: 1 }, uMap: { value: crowdAtlas() }, uSad: { value: 0 } };
+  const uniforms = shared || { uTime: { value: 0 }, uCheer: { value: 0 }, uWave: { value: 1 }, uMap: { value: crowdAtlas() }, uSad: { value: 0 } };
   const mat = new THREE.ShaderMaterial({
     uniforms, transparent: false, side: THREE.DoubleSide,
     vertexShader: `
@@ -409,11 +412,13 @@ function makeModelStadium(scene, M) {
   // two photographers behind the goal line, beside the posts
   for (const x of [-5.6, 5.8]) { const c = dressModel(M['camera-crew'].clone(true)); c.position.set(x, 0, -3.3); c.rotation.y = x < 0 ? 0.25 : -0.25; root.add(c); }
   // the crowd: 3D fans behind the goal (always in view), the flat crowd on the far sides (seen small and at an angle)
-  const D = 0.85, H = 0.42, B = 1.1, fans = [], flat = [];
+  const D = 0.85, H = 0.42, B = 1.1, fans = [], flat = [], flatGoal = [], flatFar = [], FRONT_3D = 2;
   const near = (v, list, w) => list.some((a) => Math.abs(v - a) < w);
   for (let i = 0; i < 22; i++) for (let x = -36.2; x <= 36.2; x += 0.64) {
     if (near(x, [9.25, -9.25, 27.75, -27.75], 0.65) || (i >= 5 && i <= 9 && near(x, [18.5, -18.5, 32.2, -32.2], 1.8)) || Math.random() > 0.84) continue;
-    fans.push({ x: x + (Math.random() - 0.5) * 0.1, y: B + H * i, z: -5.5 - (i + 0.55) * D, rot: 0 });
+    // (2026-11-24, under 100k a frame: only the front rows are 3D fans, the rows behind them are the flat crowd)
+    if (i < FRONT_3D) fans.push({ x: x + (Math.random() - 0.5) * 0.1, y: B + H * i, z: -5.5 - (i + 0.55) * D, rot: 0 });
+    else flatGoal.push({ x, y: B + H * i + 0.02, z: -5.5 - (i + 0.55) * D, rot: 0 });
   }
   for (const sx of [-1, 1]) for (let i = 0; i < 18; i++) for (let z = -8.6; z <= 98.6; z += 0.64) {
     const dz = z - 45; if (near(dz, [6, -6, 18, -18, 31.5, -31.5, 45, -45], 0.65) || (i >= 5 && i <= 8 && near(dz, [12, -12, 24.75, -24.75, 38.25, -38.25], 1.7)) || Math.random() > 0.85) continue;
@@ -421,10 +426,15 @@ function makeModelStadium(scene, M) {
   }
   for (let i = 0; i < 18; i++) for (let x = -36.2; x <= 36.2; x += 0.64) {
     if (near(x, [0, 18, -18], 0.65) || (i >= 5 && i <= 8 && near(x, [27, -27], 1.7)) || Math.random() > 0.8) continue;
-    flat.push({ x, y: B + H * i + 0.02, z: 118 + (i + 0.55) * D, rot: Math.PI });
+    flatFar.push({ x, y: B + H * i + 0.02, z: 118 + (i + 0.55) * D, rot: Math.PI });
   }
   const crowd = makeCrowd(flat); root.add(crowd.mesh);
   const fanMesh = makeFanCrowd([1, 2, 3, 4, 5, 6].map((k) => M['fan-' + k]), fans, crowd.uniforms); root.add(fanMesh);
+  // (2026-11-24, under 100k a frame) the stand behind the goal and the far stand are separate, hidden when the camera looks away from them
+  const goalStand = new THREE.Group(); goalStand.add(fanMesh, makeCrowd(flatGoal, crowd.uniforms).mesh); root.add(goalStand);
+  const farStand = makeCrowd(flatFar, crowd.uniforms).mesh; root.add(farStand);
+  const _f = new THREE.Vector3();
+  const look = (cam) => { cam.getWorldDirection(_f); goalStand.visible = _f.z < 0.55 || cam.position.z < -8; farStand.visible = _f.z > -0.55 || cam.position.z > 110; };
   // LED boards round the pitch (the scrolling ads)
   const dark = toon(0x2a2c40, { rough: 0.8, rim: 0 }), boardTex = boardTexture(), boards = [];
   const board = (x, z, rot, w) => { const t = boardTex.clone(); t.repeat.set(w / 14, 1); t.needsUpdate = true;
@@ -445,7 +455,7 @@ function makeModelStadium(scene, M) {
     const pr = b.getObjectByName('Print'); if (pr) pr.traverse((o) => { if (o.isMesh) o.material = new THREE.MeshBasicMaterial({ map: banner.t, side: THREE.DoubleSide }); }); }
   if (document.fonts && document.fonts.load) document.fonts.load('78px "Lilita One"').then(() => { screenArt(scr.g, 1024, 736); scr.t.needsUpdate = true; banner.fn(banner.g, 512, 256); banner.t.needsUpdate = true; }).catch(() => {});
   return {
-    root, sky, goal, net: goal.net, crowd,
+    root, sky, goal, net: goal.net, crowd, look,
     update(dt, t) { crowd.uniforms.uTime.value = t; for (const b of boards) b.offset.x = (t * 0.06) % 1; goal.net.update(dt); },
   };
 }

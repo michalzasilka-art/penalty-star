@@ -3,7 +3,13 @@
 // Local frame: +Y up, +Z his front (he faces the penalty taker). `dive` is a pivot at the middle of his body:
 // all jumps and dives move and roll it.
 import * as THREE from './lib/three.module.min.js';
-import { toon, add, group, sphere, capsule, mergeStatic, clamp, lerp, smooth, damp } from './mat.js';
+import { toon, add, group, sphere as sphere0, capsule as capsule0, mergeStatic, clamp, lerp, smooth, damp } from './mat.js';
+// (2026-11-24, Penalties under 100k triangles a frame: Rob keeps his shape and every move, with about 0.6x the segments: 23k -> ~9k)
+const LOD = 0.6, seg = (n, min) => Math.max(min, Math.round(n * LOD));
+const sphere = (r = 1, w = 18, h = 12) => sphere0(r, seg(w, 8), seg(h, 6));
+const capsule = (r, len, cap = 4, rad = 12) => capsule0(r, len, Math.max(2, Math.round(cap * 0.75)), seg(rad, 6));
+const TG = (r, t, rs, ts, arc) => new THREE.TorusGeometry(r, t, Math.max(4, rs - 2), seg(ts, 10), arc);
+const CG = (a, b, h, n) => new THREE.CylinderGeometry(a, b, h, seg(n, 8));
 
 const SCALE = 1.12, BODY_Y = 0.64 * SCALE;
 
@@ -84,7 +90,7 @@ export function makeRob() {
   const ring = (y, tilt, tube = 0.016) => {
     const r = Math.sqrt(Math.max(0.001, 0.42 * 0.42 - y * y)) + 0.002;
     const g = group(bellyS, [0, 0, 0]); g.rotation.z = tilt;
-    add(g, new THREE.TorusGeometry(r, tube, 6, 40), M.purple, [0, y, 0], null, [Math.PI / 2, 0, 0]);
+    add(g, TG(r, tube, 6, 40), M.purple, [0, y, 0], null, [Math.PI / 2, 0, 0]);
   };
   ring(0.2, 0.1); ring(-0.24, -0.14);
   // the battery window
@@ -103,12 +109,12 @@ export function makeRob() {
     const l = J['leg' + side] = group(body, [0.19 * s, -0.33, 0]);
     add(l, sphere(0.075), M.black, [0, -0.02, 0]);
     add(l, capsule(0.095, 0.06), M.cyan, [0, -0.12, 0]);
-    add(l, new THREE.TorusGeometry(0.096, 0.014, 6, 20), M.purple, [0, -0.1, 0], null, [Math.PI / 2, 0, 0]);
+    add(l, TG(0.096, 0.014, 6, 20), M.purple, [0, -0.1, 0], null, [Math.PI / 2, 0, 0]);
     const f = J['foot' + side] = group(l, [0, -0.22, 0.02]);
     add(f, sphere(1), M.cyan, [0, -0.02, 0.04], [0.12, 0.085, 0.165]);
     add(f, sphere(1), M.black, [0, -0.07, 0.04], [0.125, 0.03, 0.17]);
     add(f, sphere(0.022, 10, 8), M.lamp, [0, -0.06, 0.2]);
-    add(f, new THREE.CylinderGeometry(0.035, 0.035, 0.02, 16), M.purple, [0.118 * s, -0.035, 0.0], null, [0, 0, Math.PI / 2]);
+    add(f, CG(0.035, 0.035, 0.02, 16), M.purple, [0.118 * s, -0.035, 0.0], null, [0, 0, Math.PI / 2]);
     return l;
   }
   leg('L'); leg('R');
@@ -117,16 +123,16 @@ export function makeRob() {
     const s = side === 'L' ? 1 : -1;
     const a = J['arm' + side] = group(body, [0.4 * s, 0.16, 0]);
     add(a, sphere(0.13, 20, 14), M.cyan, [0.02 * s, 0, 0]);
-    add(a, new THREE.TorusGeometry(0.115, 0.016, 6, 20), M.purple, [0.06 * s, 0, 0], null, [0, Math.PI / 2, 0]);
+    add(a, TG(0.115, 0.016, 6, 20), M.purple, [0.06 * s, 0, 0], null, [0, Math.PI / 2, 0]);
     add(a, capsule(0.058, 0.13), M.black, [0.0, -0.15, 0]);
     const e = J['elbow' + side] = group(a, [0.0, -0.27, 0]);
     add(e, sphere(0.07), M.black, [0, 0, 0]);
     add(e, capsule(0.088, 0.1), M.cyan, [0, -0.09, 0]);
-    add(e, new THREE.TorusGeometry(0.089, 0.014, 6, 20), M.purple, [0, -0.04, 0], null, [Math.PI / 2, 0, 0]);
+    add(e, TG(0.089, 0.014, 6, 20), M.purple, [0, -0.04, 0], null, [Math.PI / 2, 0, 0]);
     // the goalkeeper glove: a white cuff, a big orange mitt with fingers and a thumb, lime stripe
     const gl = J['glove' + side] = group(e, [0, -0.23, 0]);
-    add(gl, new THREE.CylinderGeometry(0.085, 0.09, 0.07, 18), M.white, [0, 0.055, 0]);
-    add(gl, new THREE.TorusGeometry(0.088, 0.012, 6, 20), M.gloveLime, [0, 0.03, 0], null, [Math.PI / 2, 0, 0]);
+    add(gl, CG(0.085, 0.09, 0.07, 18), M.white, [0, 0.055, 0]);
+    add(gl, TG(0.088, 0.012, 6, 20), M.gloveLime, [0, 0.03, 0], null, [Math.PI / 2, 0, 0]);
     add(gl, sphere(1, 18, 12), M.glove, [0, -0.03, 0], [0.105, 0.11, 0.07]);
     add(gl, sphere(1, 14, 10), M.palm, [0, -0.035, 0.03], [0.08, 0.085, 0.045]);
     for (let i = 0; i < 4; i++) add(gl, capsule(0.026, 0.06, 3, 8), M.glove, [(-0.054 + i * 0.036), -0.13 - (i === 1 || i === 2 ? 0.012 : 0), 0.0]);
@@ -136,7 +142,7 @@ export function makeRob() {
   }
   arm('L'); arm('R');
   // ---------- the head ----------
-  add(body, new THREE.TorusGeometry(0.17, 0.035, 6, 20), M.black, [0, 0.39, 0], [1, 1, 0.9], [Math.PI / 2, 0, 0]);
+  add(body, TG(0.17, 0.035, 6, 20), M.black, [0, 0.39, 0], [1, 1, 0.9], [Math.PI / 2, 0, 0]);
   const head = J.head = group(body, [0, 0.62, 0]);
   add(head, sphere(0.29, 40, 26), M.cyan, [0, 0, 0], [1, 0.92, 0.96]);
   // the face screen: a glossy black visor with a lighter bezel
@@ -144,7 +150,7 @@ export function makeRob() {
   add(head, sphere(1, 40, 26), M.screen, [0, -0.012, 0.11], [0.238, 0.192, 0.2]);
   // eyes: several expressions, one shown at a time
   const eyes = group(head, [0, 0.0, 0.302]);
-  const arc = new THREE.TorusGeometry(0.044, 0.011, 6, 20, Math.PI);
+  const arc = TG(0.044, 0.011, 6, 20, Math.PI);
   const happy = group(eyes); for (const s of [1, -1]) add(happy, arc, M.eye, [0.085 * s, -0.012, 0], null, [0, 0.25 * s, 0]);
   const focus = group(eyes); for (const s of [1, -1]) add(focus, sphere(1, 10, 8), M.eye, [0.085 * s, 0.0, -0.004], [0.03, 0.042, 0.012], [0, 0.25 * s, 0]);
   const oops = group(eyes);
@@ -158,13 +164,13 @@ export function makeRob() {
   // ear discs
   for (const s of [1, -1]) {
     const e = group(head, [0.272 * s, 0.0, 0.0]); e.rotation.z = (Math.PI / 2) * s;
-    add(e, new THREE.CylinderGeometry(0.075, 0.08, 0.05, 18), M.orange, [0, 0, 0]);
-    add(e, new THREE.CylinderGeometry(0.058, 0.058, 0.055, 18), M.purple, [0, 0.01, 0]);
-    add(e, new THREE.CylinderGeometry(0.036, 0.036, 0.06, 18), M.white, [0, 0.015, 0]);
+    add(e, CG(0.075, 0.08, 0.05, 18), M.orange, [0, 0, 0]);
+    add(e, CG(0.058, 0.058, 0.055, 18), M.purple, [0, 0.01, 0]);
+    add(e, CG(0.036, 0.036, 0.06, 18), M.white, [0, 0.015, 0]);
   }
   // antenna with a red heart
   add(head, sphere(1, 16, 10), M.cyan, [0, 0.255, 0], [0.075, 0.05, 0.075]);
-  add(head, new THREE.CylinderGeometry(0.008, 0.01, 0.2, 10), M.frame, [0, 0.36, 0]);
+  add(head, CG(0.008, 0.01, 0.2, 10), M.frame, [0, 0.36, 0]);
   const heart = group(head, [0, 0.49, 0]);
   const hg = new THREE.ExtrudeGeometry(heartShape(), { depth: 0.022, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.012, bevelSegments: 2, curveSegments: 8 });
   hg.translate(0, 0, -0.011);
