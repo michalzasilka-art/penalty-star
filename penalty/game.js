@@ -11,6 +11,13 @@ import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
 import { clamp, lerp, smooth, easeOut, easeIn, easeInOut, backOut, damp } from './mat.js';
+import { MP } from '/sports/mp.js?v=1';
+// (2026-11-25, "Multiplayer patch") two players in a Foxino Sports party: one in goal, one on the spot, and BOTH answer the same question.
+// The striker's right word = a shot on target; the keeper's right word = a dive to the right place. Both right = the keeper catches it,
+// nobody scores. The roles swap every penalty. The answer time shrinks from 14 s to 7 s by the last penalty. The party's host is the referee:
+// it sends the questions, collects both answers and says what happens; the friend shows as Rob (the other player) with the friend's name.
+const MPG = { on: MP.on && /[?&]list=1/.test(location.search), picks: {}, done: {}, waitT: 0, tmr: 0, safety: 0 };
+const mpSecs = (qi) => 14 - 7 * qi / 9;
 import { makeSnowfall, snowCover, stringLights, loadXmasKit, placeKit } from '/sports/xmas.js?v=3';   // (2026-11-24, the user: snow and a Christmas atmosphere in every sport)
 
 const $ = (id) => document.getElementById(id);
@@ -417,9 +424,10 @@ function flash(cb, hold = 120) {
 
 function setCard(q) {
   if (REMOTE) return remoteCard(q);
-  ui.kick.innerHTML = `PENALTY ${S.qi + 1} / ${QN} <em class="role ${S.gk ? 'gk' : 'gs'}">${S.gk ? 'KEEPER' : 'STRIKER'}</em>`;
+  ui.kick.innerHTML = `PENALTY ${S.qi + 1} / ${QN} <em class="role ${S.gk ? 'gk' : 'gs'}">${S.gk ? 'KEEPER' : 'STRIKER'}</em>${MPG.on && MP.alive ? ` <em class="mpvs">vs ${esc(MP.fname.toUpperCase())}</em>` : ''}`;
+  if (MPG.on) mpClock(true);
   ui.sentence.innerHTML = `${hints(q.before)}<span class="gap">&nbsp;</span>${hints(q.after)}`;
-  ui.note.className = ''; ui.note.innerHTML = S.qi < 2 ? (S.gk ? 'You are in goal! Rob shoots at the right word: tap it to dive there!' : 'Your turn to shoot: tap the bubble with the right word!') : '&nbsp;';
+  ui.note.className = ''; ui.note.innerHTML = MPG.on && MP.alive ? (S.gk ? `You are in goal! ${esc(MP.fname)} shoots: tap the right word to dive there!` : `You shoot! ${esc(MP.fname)} is in goal: tap the right word!`) : S.qi < 2 ? (S.gk ? 'You are in goal! Rob shoots at the right word: tap it to dive there!' : 'Your turn to shoot: tap the bubble with the right word!') : '&nbsp;';
   ui.next.classList.add('hidden');
   renderShoot(ui.shoot, S.results, S.qi);
 }
@@ -427,8 +435,9 @@ function revealCard(goal) {
   const q = S.q;
   ui.sentence.innerHTML = `${hints(q.before)}<span class="gap ok">${esc(q.right)}</span>${hints(q.after)}`;
   if (goal) { ui.note.className = 'good'; ui.note.innerHTML = pick(['Great!', 'Brilliant!', 'Super!', 'Well done!', 'Yes!']) + ' ✓'; }
-  else { ui.note.className = 'bad'; ui.note.innerHTML = `Not <s>${esc(q.opts[S.chosen].text)}</s> · the right word is <b>${esc(q.right)}</b>`; }
+  else { ui.note.className = 'bad'; ui.note.innerHTML = S.timedOut ? `Too slow! The right word is <b>${esc(q.right)}</b>` : `Not <s>${esc(q.opts[S.chosen].text)}</s> · the right word is <b>${esc(q.right)}</b>`; }
   if (REMOTE && S.rnote) { ui.note.className = goal ? 'good' : 'bad'; ui.note.innerHTML = S.rnote; }
+  if (S.mpNote) { ui.note.className = goal ? 'good' : 'bad'; ui.note.innerHTML = S.mpNote; }
   renderShoot(ui.shoot, S.results, -1);
   const el = ui.shoot.children[S.qi]; if (el) el.classList.add('pop');
 }
@@ -623,9 +632,9 @@ addEventListener('keydown', (e) => {
 // ---------- the game flow ----------
 function setPhase(p) { S.phase = p; S.pt = 0; }
 
-function startGame() {
+function startGame(given) {
   if (S.phase === 'loading') return;
-  const qs = buildQuestions();
+  const qs = given || buildQuestions();
   if (!qs.length) return;
   flash(() => {
     S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = []; S.streak = 0; S.lastPower = 0;
@@ -656,10 +665,11 @@ function resetRound() {
 }
 
 function nextQuestion() {
-  S.qi++; S.gk = S.qi % 2 === 0;   // (2026-11-15, the user: "GK, GS, GK, GS…") keeper on 1, 3, 5, 7, 9; striker on 2, 4, 6, 8, 10
+  S.qi++; S.gk = S.qi % 2 === (MPG.on && !MP.host ? 1 : 0);   // (2026-11-15, the user: "GK, GS, GK, GS…") keeper on 1, 3, 5, 7, 9; striker on 2, 4, 6, 8, 10
   if (S.qi >= QN) { finish(); return; }
-  S.q = S.questions[S.qi];
+  S.q = S.questions[S.qi]; MPG.mine = null; S.mpNote = null; S.timedOut = false; S.shotK = null; S.diveK = null;
   resetRound();
+  if (MPG.later && MPG.later.qi === S.qi) { const m = MPG.later; MPG.later = null; setTimeout(() => mpKick(m), 0); }
   setPhase('aim');
   setCard(S.q);
   measureSafe(); fitPlay(); camSnap = true;
@@ -677,6 +687,7 @@ function nextQuestion() {
 
 // the player picked bubble k
 function choose(k) {
+  if (MPG.on) { mpChoose(k); return; }
   if (S.phase !== 'aim' || k < 0 || k >= NB || !S.q.opts[k]) return;
   const q = S.q;
   S.chosen = k; S.isGoal = !!q.opts[k].ok;   // (in a keeper round: the right word = Foxino dives where the ball goes = a save)
@@ -725,7 +736,7 @@ function planShot() {
 // ---------- the keeper rounds (2026-11-15): Rob takes the penalty and always shoots at the bubble with the RIGHT word;
 // Foxino dives to the bubble the player tapped, so the right word is a save and a wrong one lets the goal in ----------
 function planKeeperShot() {
-  const q = S.q, o = q.opts[q.correct], ch = q.opts[S.chosen];
+  const q = S.q, o = q.opts[S.shotK ?? q.correct], ch = q.opts[S.diveK ?? S.chosen];
   const B = new THREE.Vector3(o.x, o.y, BUB_Z), P0 = SPOT.clone(), mid = P0.clone().lerp(B, 0.5);
   const side = Math.abs(B.x) > 0.5 ? Math.sign(B.x) : (Math.random() < 0.5 ? -1 : 1);
   SHOT.P0 = P0; SHOT.P1 = new THREE.Vector3(mid.x - side * 0.5, Math.max(P0.y, B.y) + 0.3, mid.z); SHOT.B = B;
@@ -795,7 +806,7 @@ function robShooter(dt) {
   } else { rob.apply(RPOSES.ready(t), 6, dt); bob(0); }
 }
 function onKeeperSave() {
-  S.sub = 'gkSave'; S.tRes = S.time; S.goals++;
+  S.sub = 'gkSave'; S.tRes = S.time; if (!MPG.on || S.mpEarn) S.goals++;
   S.results[S.qi] = 'stop';
   showBanner('SAVED!', 'goal');
   sfx.save(); setTimeout(() => sfx.cheer(), 120); S.cheer = 1; S.shake = 0.7;
@@ -847,7 +858,7 @@ function updateShot(dt) {
     // the ball reaches the bubble: pop!
     E.pop = 1;
     ball.position.copy(SHOT.B);
-    const k = S.gk ? S.q.correct : S.chosen, b = bubbles[k];
+    const k = S.gk ? (S.shotK ?? S.q.correct) : S.chosen, b = bubbles[k];
     b.state = 'pop'; b.t = 0;
     labelEls[k].style.opacity = '0';
     sparks.emit(_v.set(b.x, b.y, BUB_Z), S.isGoal ? ['#ffffff', '#ffe066', '#6fe2ff', '#ff8fc4', '#7dffb0'] : ['#ffffff', '#c9d2e8', '#9aa6c0'], 70, 3.2, BUB_R);
@@ -869,7 +880,7 @@ function updateShot(dt) {
     ui.next.innerHTML = (S.qi + 1 >= QN ? 'RESULTS' : 'NEXT') + ' <span aria-hidden="true">&#9654;</span>';
     ui.next.classList.remove('hidden');
   }
-  if (!REMOTE && S.tRes && S.time - S.tRes > (S.isGoal ? 2.4 : 9)) advance();   // (2026-11-15) a goal or a save goes on to the next penalty by itself
+  if (!REMOTE && S.tRes && S.time - S.tRes > (MPG.on ? 3.2 : S.isGoal ? 2.4 : 9)) advance();   // (2026-11-15) a goal or a save goes on to the next penalty by itself
 }
 
 // ---------- confetti on the screen (like the other Fugio games): a burst from the bubble the moment the right word is hit,
@@ -1361,6 +1372,58 @@ if (REMOTE) addEventListener('message', (e) => {
   if (m.fs === 'kick') remoteKick(m); else if (m.fs === 'shot') remoteShot(m); else if (m.fs === 'idle') remoteIdle();
 });
 
+// ---------- the party game (2026-11-25) ----------
+function mpClock(on) { let el = document.getElementById('mpClock'); if (!el) { el = document.createElement('div'); el.id = 'mpClock'; el.innerHTML = '<i></i>'; ui.card.appendChild(el);
+    const st = document.createElement('style'); st.textContent = '#mpClock{height:7px;border-radius:4px;background:rgba(40,30,90,.18);margin:6px 0 2px;overflow:hidden}#mpClock i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#5bdc7a,#ffcd1c);border-radius:4px}#mpClock.hot i{background:#ff4f6a}.mpvs{background:#ff7d22!important;color:#fff!important}'; document.head.appendChild(st); }
+  cancelAnimationFrame(MPG.raf); el.style.visibility = on ? '' : 'hidden'; if (!on) return;
+  const T = mpSecs(S.qi) * 1000, t0 = performance.now(), qi = S.qi, bar = el.firstChild;
+  const f = () => { const left = T - (performance.now() - t0); bar.style.width = Math.max(0, left / T * 100) + '%'; el.classList.toggle('hot', left < 3000);
+    if (left <= 0) { if (S.qi === qi && S.phase === 'aim' && MPG.mine == null) mpChoose(-1); return; } if (S.qi === qi && S.phase === 'aim') MPG.raf = requestAnimationFrame(f); }; MPG.raf = requestAnimationFrame(f); }
+function mpBot(qi) { const q = S.questions[qi]; return Math.random() < 0.65 ? q.correct : (q.correct + 1 + Math.floor(Math.random() * (q.opts.length - 1))) % q.opts.length; }
+function mpChoose(k) {
+  if (S.phase !== 'aim' || MPG.mine != null) return; if (k >= 0 && (k >= NB || !S.q.opts[k])) return;
+  MPG.mine = k; S.timedOut = k < 0; mpClock(false);
+  if (k >= 0) { labelEls[k].classList.add('picked'); bubbles[k].hot = 1; sfx.pick(); }
+  ui.note.className = ''; ui.note.innerHTML = k < 0 ? 'Too slow!' : (MP.alive ? `Waiting for ${esc(MP.fname)}…` : '&nbsp;');
+  const me = MP.host ? 'h' : 'g';
+  if (!MP.alive) { mpResolve(S.qi, me === 'h' ? k : mpBot(S.qi), me === 'g' ? k : mpBot(S.qi)); return; }
+  if (MP.host) { (MPG.picks[S.qi] = MPG.picks[S.qi] || {}).h = k; mpTry(S.qi); } else MP.send({ t: 'pick', qi: S.qi, k });
+}
+// the referee: both picks in (or the friend's clock ran out long ago) → the kick
+function mpTry(qi) { const P = MPG.picks[qi]; if (!P || MPG.done[qi]) return;
+  if (P.h != null && P.g != null) { MPG.done[qi] = 1; clearTimeout(MPG.safety); const m = { t: 'kick', qi, h: P.h, g: P.g }; MP.send(m); mpKick(m); return; }
+  if (P.h != null && P.g == null) { clearTimeout(MPG.safety); MPG.safety = setTimeout(() => { if (!MPG.done[qi]) { P.g = -1; mpTry(qi); } }, mpSecs(qi) * 1000 + 6000); } }
+function mpKick(m) { if (m.qi !== S.qi || MPG.kicked === m.qi) { MPG.later = m; return; } mpResolve(m.qi, m.h, m.g); }
+function mpResolve(qi, h, g) {
+  if (MPG.kicked === qi) return; MPG.kicked = qi;
+  const q = S.q, mine = MP.host ? h : g, theirs = MP.host ? g : h, ok = (k) => k >= 0 && !!q.opts[k] && q.opts[k].ok;
+  const wrongOf = (k) => (k >= 0 ? k : (q.correct + 1) % q.opts.length), me = ok(mine), they = ok(theirs), fn = esc(MP.fname);
+  S.chosen = mine >= 0 ? mine : wrongOf(-1); S.picks[S.qi] = q.opts[S.chosen].text; S.streak = me ? S.streak + 1 : 0; S.power = false; S.shotK = null; S.diveK = null; S.mpEarn = false;
+  if (!S.gk) {   // I shoot, the friend keeps: a goal only if I'm right and they're wrong
+    S.isGoal = me && !they;
+    S.mpNote = !me ? null : they ? `${fn} knew it too and saved it! The right word: <b>${esc(q.right)}</b>` : null;
+  } else {       // the friend shoots at their pick; I dive to mine
+    S.shotK = they ? q.correct : wrongOf(theirs);
+    const save = !they || me; S.isGoal = save; S.mpEarn = me;
+    S.diveK = !they ? S.shotK : S.chosen;
+    S.mpNote = !they ? `${fn} missed the right word! It was <b>${esc(q.right)}</b>` : me ? null : null;
+  }
+  setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {}; sfx.whistle(false, 0.12); planShot();
+}
+async function mpStart() {
+  window.MPBOT = { q: () => (S.phase === 'aim' && S.q && MPG.mine == null ? { id: 'p' + S.qi, correct: S.q.correct, n: S.q.opts.length } : null), answer: (k) => choose(k), state: () => ({ qi: S.qi, gk: S.gk, goals: S.goals, phase: S.phase }) };
+  MP.listen((m) => {
+    if (m.t === 'qs' && !MP.host && !MPG.got) { MPG.got = true; startGame(m.qs); return; }
+    if (m.t === 'pick' && MP.host) { (MPG.picks[m.qi] = MPG.picks[m.qi] || {}).g = m.k; mpTry(m.qi); return; }
+    if (m.t === 'kick' && !MP.host) { mpKick(m); return; }
+  });
+  MP.onLost(() => { showBanner(`${MP.fname.toUpperCase()} LEFT`, 'saved'); if (S.phase === 'aim' && MPG.mine != null && MPG.kicked !== S.qi) { const me = MP.host ? 'h' : 'g', k = MPG.mine; mpResolve(S.qi, me === 'h' ? k : mpBot(S.qi), me === 'g' ? k : mpBot(S.qi)); } if (!S.questions || !S.questions.length) startGame(); });
+  const ok = await MP.ready(25000);
+  if (!ok) { MPG.on = false; startGame(); return; }
+  if (MP.host) { const qs = buildQuestions(); MP.send({ t: 'qs', qs }); startGame(qs); }
+  else setTimeout(() => { if (!MPG.got && MP.alive) { /* (the referee's questions are on their way) */ } }, 100);
+}
+
 // ---------- start ----------
 function init() {
   renderPack();
@@ -1371,7 +1434,7 @@ function init() {
   setTimeout(() => {
     ui.loading.classList.add('gone');
     if (REMOTE) { window.parent.postMessage({ fs: 'ready', slot: RSLOT }, '*'); window.PS.ready = true; return; }
-    if (LIST) { window.PS.ready = true; unlock(); startGame(); return; }
+    if (LIST) { window.PS.ready = true; unlock(); if (MPG.on) mpStart(); else startGame(); return; }
     ui.start.classList.remove('hidden');
     $('playBtn').classList.add('pulse');
     window.PS.ready = true;
