@@ -145,6 +145,7 @@ export function makeFoxino() {
     new THREE.Vector3(-0.24, 0.2, -0.2), new THREE.Vector3(-0.3, 0.36, -0.17), new THREE.Vector3(-0.29, 0.5, -0.1), new THREE.Vector3(-0.22, 0.6, -0.04),
   ], (t) => 0.03 + 0.085 * Math.sin(Math.min(1, t * 1.25) * Math.PI * 0.62) * (t < 0.85 ? 1 : 1 - (t - 0.85) / 0.15 * 0.85), 44, 18, band);
   add(tail, tailGeo, M.tail);
+  tail.visible = false;   /* (2026-11-24, the user: no tail on any Foxino in FoxSports: this stand-in has none either) */
   const tailSegs = [tail];
   // ---------- torso (jersey) ----------
   const spine = J.spine = group(hips, [0, 0.03, 0]);
