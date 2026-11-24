@@ -79,7 +79,7 @@ function makeSky() {
     fragmentShader: `varying vec3 vD; uniform vec3 uSun;
       void main(){
         float h = vD.y;
-        vec3 zen = vec3(0.16, 0.38, 0.86), mid = vec3(0.45, 0.68, 0.98), hor = vec3(1.0, 0.86, 0.66), low = vec3(0.86, 0.72, 0.62);
+        vec3 zen = vec3(0.07, 0.10, 0.32), mid = vec3(0.22, 0.27, 0.62), hor = vec3(0.98, 0.70, 0.62), low = vec3(0.62, 0.58, 0.78);   // (2026-11-24, Christmas: a winter dusk)
         vec3 c = mix(hor, mid, smoothstep(0.0, 0.22, h));
         c = mix(c, zen, smoothstep(0.2, 0.75, h));
         c = mix(low, c, smoothstep(-0.12, 0.0, h));
@@ -88,7 +88,10 @@ function makeSky() {
         // a few soft streaky clouds
         float cl = sin(vD.x * 9.0 + vD.z * 3.0) * sin(vD.z * 7.0 - vD.x * 2.0 + 1.3) * 0.5 + 0.5;
         cl *= smoothstep(0.05, 0.2, h) * (1.0 - smoothstep(0.35, 0.6, h));
-        c = mix(c, vec3(1.0, 0.95, 0.9), smoothstep(0.62, 0.95, cl) * 0.45);
+        c = mix(c, vec3(0.85, 0.82, 0.95), smoothstep(0.62, 0.95, cl) * 0.3);
+        // stars in the dark part of the sky
+        vec3 sd = floor(vD * 260.0); float st = fract(sin(dot(sd, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        c += vec3(1.0, 0.97, 0.9) * step(0.9975, st) * smoothstep(0.25, 0.6, h) * 0.9;
         gl_FragColor = vec4(c, 1.0);
       }`,
   });
@@ -121,6 +124,9 @@ function makePitch() {
       // the darker track around the pitch
       float off = max(max(abs(p.x) - 37.0, -p.y - 5.0), p.y - 112.0);
       col = mix(col, vec3(0.2, 0.36, 0.16), smoothstep(0.0, 0.4, off));
+      // (2026-11-24, Christmas) snow on the track round the pitch and a frosty rim along the edges; the playing area stays green
+      { float sn = vnoise(p * 0.9) * 0.6 + vnoise(p * 4.0) * 0.4; col = mix(col, vec3(0.9, 0.93, 0.99) * (0.9 + 0.1 * sn), smoothstep(-0.6, 1.2, off + (sn - 0.5) * 1.4));
+        float far = smoothstep(16.0, 34.0, length(p - vec2(0.0, 11.0))); col = mix(col, vec3(0.88, 0.92, 0.98), smoothstep(0.5, 0.78, vnoise(p * 0.32) * 0.7 + vnoise(p * 2.1) * 0.3) * 0.6 * far); }   // (a light dusting of snow on the pitch, away from where the penalties are taken)
       float d = 1e3;
       d = min(d, seg(p, vec2(-34.0, 0.0), vec2(34.0, 0.0)));
       d = min(d, seg(p, vec2(-34.0, 0.0), vec2(-34.0, 105.0)));
@@ -358,10 +364,10 @@ function standGeometry(width, rows, base) {
 
 function boardTexture() {
   const W = 1024, H = 64, cv = canvas(W, H), g = cv.getContext('2d');
-  const blocks = [['#5b2bb0', '#ffcd1c', 'fugio'], ['#ff7d22', '#ffffff', 'FOXINO'], ['#11152e', '#3cc6ef', 'PENALTY STAR'], ['#ffcd1c', '#5b2bb0', 'fugio.co']];
+  const blocks = [['#b3202e', '#ffe08a', 'fugio'], ['#1f7a3e', '#ffffff', 'FOXINO'], ['#b3202e', '#ffffff', 'PENALTY STAR'], ['#1f7a3e', '#ffe08a', 'fugio.co']];   // (2026-11-24, Christmas: red and green)
   const bw = W / blocks.length;
   const draw = () => blocks.forEach(([bg, fg, txt], i) => {
-    g.fillStyle = bg; g.fillRect(i * bw, 0, bw, H);
+    g.fillStyle = bg; g.fillRect(i * bw, 0, bw, H); g.fillStyle = 'rgba(255,255,255,.22)'; for (let k = 0; k < 9; k++) { g.beginPath(); g.arc(i * bw + ((k * 37 + i * 11) % bw), (k * 23) % H, 1.6 + (k % 3), 0, 6.3); g.fill(); }
     g.fillStyle = fg; g.font = '40px "Lilita One", "Arial Black", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(txt, i * bw + bw / 2, H / 2 + 2);
   });

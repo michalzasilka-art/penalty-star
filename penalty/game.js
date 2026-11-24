@@ -6,11 +6,12 @@ import { RoomEnvironment } from './lib/RoomEnvironment.js';
 import { makeFoxino, POSES } from './foxino.js';
 import { loadFoxino, KIT_PARTS } from './foxino-glb.js?v=3';
 import { makeRob, RPOSES, ROB_BODY_Y } from './rob.js';
-import { makeStadium, loadStadiumModels, dressModel } from './stadium.js?v=2';
+import { makeStadium, loadStadiumModels, dressModel } from './stadium.js?v=4';
 import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
 import { clamp, lerp, smooth, easeOut, easeIn, easeInOut, backOut, damp } from './mat.js';
+import { makeSnowfall, snowCover, stringLights, loadXmasKit, placeKit } from '/sports/xmas.js?v=3';   // (2026-11-24, the user: snow and a Christmas atmosphere in every sport)
 
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -66,8 +67,8 @@ scene.add(camera);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.5;
-scene.add(new THREE.HemisphereLight(0xe4f0ff, 0x5a8a45, 1.25));
-const key = new THREE.DirectionalLight(0xfff1de, 2.3); key.position.set(9, 22, 26); scene.add(key);
+scene.add(new THREE.HemisphereLight(0xdde4ff, 0x7d8aa6, 1.25));   // (Christmas: a cool winter sky, snow light from below)
+const key = new THREE.DirectionalLight(0xffd9ad, 2.2); key.position.set(9, 22, 26); scene.add(key);
 const rimL = new THREE.DirectionalLight(0xffe0b8, 1.3); rimL.position.set(-14, 12, -24); scene.add(rimL);
 
 /* (2026-11-17, the user: "put this lighting setting you did in Adventures to ... penalties") the Foxino Adventures look:
@@ -123,6 +124,30 @@ function drawFrame() {
 // (2026-11-15) the Blender stadium; the code-built one if its models can't load
 let STADIUM_MODELS = null; try { STADIUM_MODELS = await loadStadiumModels(); } catch (e) { console.warn('Stadium models did not load; using the code-built stadium', e); }
 const stadium = makeStadium(scene, STADIUM_MODELS);
+// ---------- Christmas (2026-11-24): snow on the stands, lights along the boards, the shared props, falling snow ----------
+const XM = { snow: null, lights: [] };
+window.FP = { scene, camera, renderer, stadium };   // (test hook: the frame's triangles and the Christmas props)
+(async () => {
+  if (STADIUM_MODELS) for (const k of ['stadium-main', 'stadium-far', 'stadium-corners', 'stadium-side', 'floodlight']) if (STADIUM_MODELS[k]) snowCover(STADIUM_MODELS[k]);   // (the stands and roofs only: never the pitch, the goal or people)
+  XM.snow = makeSnowfall({ n: innerWidth * innerHeight < 500000 ? 750 : 1150, box: [26, 14, 32], ahead: 0.5 }); scene.add(XM.snow);
+  const xs = []; for (let x = -36; x <= 36.01; x += 6) xs.push(x);
+  XM.lights.push(stringLights(stadium.root, xs.map((x) => new THREE.Vector3(x, 1.2, -4.5)), { sag: 0.25, per: 7 }));
+  for (const s of [-1, 1]) { const zs = []; for (let z = -4; z <= 64.1; z += 6.8) zs.push(z); XM.lights.push(stringLights(stadium.root, zs.map((z) => new THREE.Vector3(s * 38.3, 1.2, z)), { sag: 0.25, per: 7, warm: true })); }
+  XM.lights.push(stringLights(stadium.root, [new THREE.Vector3(-3.55, 2.36, -0.12), new THREE.Vector3(3.55, 2.36, -0.12)], { sag: 0.05, per: 16, size: 0.045, glow: 0.35 }));   // (lights along the crossbar: across the top of the keeper's view)
+  if (await loadXmasKit(new GLTFLoaderLR())) {
+    for (const s of [-1, 1]) {
+      placeKit(stadium.root, 'XmasTree_Big', s * 10.6, -3.2, { rot: s * 0.5, s: 1.7 }); placeKit(stadium.root, 'XmasTree_Small', s * 15.5, -3.5, { rot: s, s: 1.4 });
+      placeKit(stadium.root, 'XmasTree_Big', s * 36.2, 22, { rot: s, s: 1.2 }); placeKit(stadium.root, 'XmasTree_Big', s * 36.2, 46, { rot: -s, s: 1.2 });
+      placeKit(stadium.root, 'Snowman', s * 24, 6.5, { rot: -s * 1.2 }); placeKit(stadium.root, 'Snowman', s * 36, 33, { rot: -s * Math.PI / 2 });
+      placeKit(stadium.root, 'Lantern', s * 20.5, -2.4, { rot: 0 }); placeKit(stadium.root, 'Lantern', s * 36.5, 10, { rot: -s * Math.PI / 2 });
+      placeKit(stadium.root, 'CandyCane', s * 11.8, -2.6, { rot: s * 0.3 }); }
+    for (const x of [-2.745, -0.915, 0.915, 2.745]) { const g = placeKit(stadium.root, 'Garland', x, 0.02, { y: 2.44 + 0.1 }); if (g) g.scale.set(0.915, 1.25, 1.25); }   // (a fir garland with bulbs along the crossbar: in view from both ends)
+    for (const [x, s2] of [[-24, 3.0], [-10, 3.3], [10, 3.3], [24, 3.0]]) placeKit(stadium.root, 'XmasTree_Big', x, 104, { rot: x * 0.1, s: s2 });   // (big trees in front of the far stand: the keeper looks down the pitch at them)
+    for (const [x, y, s3] of [[0, 30, 7], [-30, 24, 4.5], [30, 24, 4.5]]) { const st = placeKit(stadium.root, 'StarLight', x, 121, { y, rot: Math.PI, s: s3 }); if (st) st.traverse((o) => { if (o.isMesh) o.material.fog = false; }); }   // (glowing stars over the far stand, in the keeper's sky)
+    placeKit(stadium.root, 'Gift_A', -7.3, -3.0, { rot: 0.4 }); placeKit(stadium.root, 'Gift_B', 7.5, -2.8, { rot: -0.3 }); placeKit(stadium.root, 'Gift_C', -6.7, -3.7, { rot: 1.1 }); placeKit(stadium.root, 'Gift_A', 8.1, -3.6, { rot: 2 });
+    placeKit(stadium.root, 'Sleigh', -30, -2.6, { rot: 0.5 }); placeKit(stadium.root, 'SnowDrift_A', 25, -3.4); placeKit(stadium.root, 'SnowDrift_B', -21.5, -3.6, { rot: 1.5 }); placeKit(stadium.root, 'SnowPile', 31, -3.2);
+  }
+})().catch((e) => console.warn('xmas', e));
 // (2026-11-15) the Locker room set from Blender, 40 m under the pitch: the Locker room's camera and Foxino go down there.
 // Its hanging shirts wear the shirt colour the player picks; the door plate says FOXINO
 const LOCKER_AT = new THREE.Vector3(0, -40, 11.6);
@@ -1264,6 +1289,7 @@ function frame(now) {
   updateBlobs();
   updateCrowd(dt);
   stadium.update(dt, S.time); wind.update(dt, S.time);
+  if (XM.snow) XM.snow.update(now / 1000, camera, pr); for (const l of XM.lights) l.update(now / 1000);
   confetti.update(dt);
   sparks.update(dt);
   S.shake = Math.max(0, S.shake - rdt * 2.4);
