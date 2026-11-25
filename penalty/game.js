@@ -11,7 +11,7 @@ import { GLTFLoader as GLTFLoaderLR } from './lib/GLTFLoader.js';
 import { makeBall, makeBlob, makeBubble, makeConfetti, makeSparks, BALL_R } from './props.js';
 import { sfx, unlock, crowd as crowdSound, setMuted, isMuted } from './sound.js';
 import { clamp, lerp, smooth, easeOut, easeIn, easeInOut, backOut, damp } from './mat.js';
-import { MP } from '/sports/mp.js?v=1';
+import { MP } from '/sports/mp.js?v=3';
 // (2026-11-25, "Multiplayer patch") two players in a Foxino Sports party: one in goal, one on the spot, and BOTH answer the same question.
 // The striker's right word = a shot on target; the keeper's right word = a dive to the right place. Both right = the keeper catches it,
 // nobody scores. The roles swap every penalty. The answer time shrinks from 14 s to 7 s by the last penalty. The party's host is the referee:
@@ -1418,10 +1418,10 @@ async function mpStart() {
     if (m.t === 'kick' && !MP.host) { mpKick(m); return; }
   });
   MP.onLost(() => { showBanner(`${MP.fname.toUpperCase()} LEFT`, 'saved'); if (S.phase === 'aim' && MPG.mine != null && MPG.kicked !== S.qi) { const me = MP.host ? 'h' : 'g', k = MPG.mine; mpResolve(S.qi, me === 'h' ? k : mpBot(S.qi), me === 'g' ? k : mpBot(S.qi)); } if (!S.questions || !S.questions.length) startGame(); });
-  const ok = await MP.ready(25000);
+  const ok = await MP.ready(90000);
   if (!ok) { MPG.on = false; startGame(); return; }
   if (MP.host) { const qs = buildQuestions(); MP.send({ t: 'qs', qs }); startGame(qs); }
-  else setTimeout(() => { if (!MPG.got && MP.alive) { /* (the referee's questions are on their way) */ } }, 100);
+  else setTimeout(() => { if (!MPG.got) { MPG.got = true; MP.giveUp(); if (!S.questions || !S.questions.length) startGame(); } }, 40000);   /* (the referee's questions never came: both play on alone) */
 }
 
 // ---------- start ----------
