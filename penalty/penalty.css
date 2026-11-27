@@ -103,6 +103,7 @@ button { font: inherit; cursor: pointer; border: 0; color: inherit; }
   text-shadow: 0 2px 0 rgba(20, 10, 60, 0.6);
   box-shadow: 0 0 14px var(--c, #fff), inset 0 0 8px rgba(255, 255, 255, 0.25);
   overflow-wrap: anywhere; letter-spacing: 0.02em;
+  width: max-content;   /* (2026-11-27: as wide as the word, up to the space the font was fitted to (max-width set in game.js), not the bubble's own width: "waren" stays on one line) */
 }
 .blabel:hover span { transform: scale(1.06); }
 .blabel.picked span { background: rgba(255, 125, 34, 0.85); border-color: #fff; }
@@ -338,3 +339,40 @@ body.remote .blabel span { white-space: nowrap; }
 
 /* (2026-11-17) inside a Foxino Sports playlist: no PLAY AGAIN or word button at the end (the lobby goes on) */
 body.list #againBtn, body.list #packBtn2 { display: none; }
+
+/* ---------- the shootout board (2026-11-26 night: a real shootout, FOX vs ROB) ---------- */
+body:not(.remote) #shoot { display: none; }
+body.remote #board { display: none; }
+#cardTop { justify-content: center; }
+#cardKick { white-space: normal; line-height: 1.25; }
+#cardKick .role { font-style: normal; }
+#cardKick .role.gk { color: #e0303f; }
+#cardKick .role.gs { color: #1fae55; }
+#cardKick .sdtag { font-style: normal; background: #e0303f; color: #fff; border-radius: 8px; padding: 1px 7px; letter-spacing: 1px; }
+.sboard { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; margin: 0 0 4px; }
+.sboard .tm { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sboard .tm.a { align-items: flex-end; }
+.sboard .tm.b { align-items: flex-start; }
+.sboard .tm b { font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 17px; letter-spacing: 1.5px; color: var(--purple); line-height: 1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sboard .tm.you b { color: #ff7a12; }
+.sboard .sc { display: flex; align-items: center; gap: 6px; background: #2a1b5c; color: #fff; border-radius: 12px; padding: 2px 12px 3px; font-family: 'Lilita One', sans-serif; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .25); }
+.sboard .sc b { font-weight: 400; font-size: 30px; line-height: 1.1; min-width: .62em; text-align: center; }
+.sboard .sc i { font-style: normal; font-size: 22px; opacity: .7; }
+.sboard .dots { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; }
+.sboard .d { width: 13px; height: 13px; border-radius: 50%; background: #ece6fb; box-shadow: inset 0 0 0 2px rgba(91, 43, 176, .22); flex: none; }
+.sboard .d.sd { width: 9px; height: 9px; }
+.sboard .d.g { background: #2fc46a; box-shadow: inset 0 0 0 2px #1a8a46; }
+.sboard .d.m { background: #ef4a5c; box-shadow: inset 0 0 0 2px #a81f30; }
+.sboard .d.now { box-shadow: inset 0 0 0 2.5px var(--orange); animation: nowPulse 1s ease-in-out infinite; }
+.sboard .d.pop { animation: slotPop .5s cubic-bezier(.2, 1.8, .4, 1); }
+.sboard .sdbar { width: 2px; height: 12px; background: #e0303f; border-radius: 1px; margin: 0 2px; flex: none; }
+.sboard.end { margin: 8px auto 4px; max-width: 420px; }
+#endTitle.endwin { font-size: clamp(24px, 7vw, 40px); line-height: 1.1; margin: 4px 0 6px; rotate: -2deg; }
+.endhow { font-family: 'Lilita One', sans-serif; letter-spacing: 1px; color: #e0303f; font-size: 14px; }
+#end .endscore.shoot { display: block; text-align: center; margin: 2px 0 0; }
+#end .endscore.shoot #endGoals { display: none; }
+@media (max-width: 380px) { .sboard .tm b { font-size: 15px; } .sboard .sc b { font-size: 26px; } .sboard .d { width: 11px; height: 11px; } .sboard .d.sd { width: 8px; height: 8px; } .sboard { gap: 6px; } }
+@media (max-height: 500px) and (orientation: landscape) { .sboard { margin: 0 0 2px; } .sboard .sc b { font-size: 22px; } .sboard .sc i { font-size: 17px; } .sboard .tm b { font-size: 14px; } .sboard .d { width: 11px; height: 11px; } .sboard .tm { flex-direction: row; gap: 6px; } .sboard .tm.a { flex-direction: row-reverse; } }
+.sboard.many .d { width: 10px; height: 10px; } .sboard.many .d.sd { width: 7px; height: 7px; } .sboard.many .dots { gap: 2px; } .sboard.many .sdbar { margin: 0 1px; }
+.sboard.end .tm b { font-size: 15px; } .sboard.end .sc b { font-size: 26px; }
+@media (max-width: 430px) { .sboard.end { gap: 5px; } .sboard.end .d { width: 10px; height: 10px; } .sboard.end .d.sd { width: 7px; height: 7px; } .sboard.end .dots { gap: 2px; } }

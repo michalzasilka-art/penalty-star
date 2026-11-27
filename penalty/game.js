@@ -17,7 +17,35 @@ import { MP } from '/sports/mp.js?v=3';
 // nobody scores. The roles swap every penalty. The answer time shrinks from 14 s to 7 s by the last penalty. The party's host is the referee:
 // it sends the questions, collects both answers and says what happens; the friend shows as Rob (the other player) with the friend's name.
 const MPG = { on: MP.on && /[?&]list=1/.test(location.search), picks: {}, done: {}, waitT: 0, tmr: 0, safety: 0 };
-const mpSecs = (qi) => 14 - 7 * qi / 9;
+// (2026-11-26 night, the user: "decrease the time to answer in every discipline": about a third shorter) 9.3 s on the first penalty down to
+// 4.7 s on the last, never under 3 s; solo now has the same clock as the party game (a time-out = a miss)
+const ansSecs = (qi) => Math.max(3, (14 - 7 * Math.min(qi, 9) / 9) * 2 / 3), mpSecs = ansSecs;
+// (2026-11-26 night, the user: "Make penalties score system more to the normal football game like the scoring system and stuff": a REAL
+// SHOOTOUT) FOX (Foxino's team) vs ROB, kicks alternating, FOX first: 5 kicks each with the early finish (one side can't catch up any more),
+// then sudden death (one kick each a round, decided when one scores and the other doesn't), at most SD_CAP rounds; still level = the tie-break
+// (more right answers over the shootout, then faster answers). In a party: the host's team (kicks first) vs the friend's team.
+// Kick k: team k % 2 shoots (0 = the side that kicks first). S.results[k]: 'goal' / 'let' = the shooting side scored, 'save' / 'stop' = it did not.
+const REG = 5, SD_CAP = 5, KMAX = 2 * (REG + SD_CAP);
+const myTeam = () => (MPG.on && !MP.host ? 1 : 0);
+const teamName = (t) => (MPG.on ? ((t === 0) === MP.host ? MP.name : MP.fname) : ['FOX', 'ROB'][t]).toUpperCase().slice(0, 9);
+function tally() { const T = { a: 0, b: 0, na: 0, nb: 0 }; for (let k = 0; k < KMAX; k++) { const r = S.results[k]; if (!r) break; const sc = r === 'goal' || r === 'let' ? 1 : 0; if (k % 2) { T.nb++; T.b += sc; } else { T.na++; T.a += sc; } } return T; }
+function shootoutOver() { const T = tally(), n = T.na + T.nb; if (!n) return false;
+  if (n <= 2 * REG) return T.a > T.b + (REG - T.nb) || T.b > T.a + (REG - T.na);   // (the early finish; after 5 each and level: sudden death)
+  return n % 2 === 0 && (T.a !== T.b || n >= KMAX); }
+// who won: on goals; level after the capped sudden death: more right answers, then the faster answers
+function shootoutWinner() { const T = tally(); if (T.a !== T.b) return { w: T.a > T.b ? 0 : 1, how: 'goals', ...T };
+  const A = S.ans || [], n = T.na + T.nb; let ra = 0, rb = 0, ta = 0, tb = 0;
+  for (let k = 0; k < n; k++) { const x = A[k] || {}; if (MPG.on) { ra += x.h && x.h.ok ? 1 : 0; rb += x.g && x.g.ok ? 1 : 0; ta += x.h ? x.h.t : ansSecs(k); tb += x.g ? x.g.t : ansSecs(k); }
+    else { const ok = x.h && x.h.ok; ra += ok ? 1 : 0; rb += ok ? 0 : 1; ta += (x.h ? x.h.t : ansSecs(k)) / ansSecs(k); } }
+  if (ra !== rb) return { w: ra > rb ? 0 : 1, how: 'right', ...T };
+  if (MPG.on) return { w: ta <= tb ? 0 : 1, how: 'time', ...T };
+  return { w: ta / Math.max(1, n) < 0.5 ? 0 : 1, how: 'time', ...T }; }   // (solo: FOX if Foxino answered, on average, inside half of the clock)
+// (2026-11-26 night, the user: "when youre waiting for answer it is like doing stuff slow mo") while the question is up the taker (Foxino, or Rob in
+// the keeper rounds) runs in at the ball in slow motion: u along the run-up goes 0 → AIM_U by the deadline; the answer snaps the real speed back
+// on and the shot carries on from there (the run-up is not started again)
+const AIM_U = 0.82;
+function aimU() { if (S.phase !== 'aim' || !S.aimAt) return 0; const a = (performance.now() - S.aimAt) / (ansSecs(S.qi) * 1000); return AIM_U * Math.max(0, Math.min(1, (a - 0.1) / 0.9)); }
+function fromAim() { const u = S.aimU || 0; S.aimU = 0; if (u > 0) S.st = SHOT.tRun + u * T_RUN; }
 import { makeSnowfall, snowCover, stringLights, loadXmasKit, placeKit } from '/sports/xmas.js?v=3';   // (2026-11-24, the user: snow and a Christmas atmosphere in every sport)
 
 const $ = (id) => document.getElementById(id);
@@ -302,7 +330,7 @@ function pickSentence(pk, r) {
 function buildQuestions() {
   const pk = packNow(); if (!pk) return [];
   // the package's easy third first, then the middle, then the hardest
-  return [0, 0, 0, 1, 1, 1, 1, 2, 2, 2].map((r) => {
+  return [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2].map((r) => {   // (the shootout: 10 kicks + up to 10 in sudden death)
     const w = fillChoices(pickSentence(pk, r), pk);
     // (four bubbles) neighbours never on the same row, so every word has room: a zigzag that starts high or low
     const up = Math.random() < 0.5 ? 1 : 0, rows = w.map((_, k) => (k + up) % 2);
@@ -313,7 +341,7 @@ function buildQuestions() {
 
 // ---------- UI ----------
 const ui = {
-  hud: $('hud'), card: $('card'), kick: $('cardKick'), shoot: $('shoot'), sentence: $('sentence'), note: $('note'), next: $('nextBtn'),
+  hud: $('hud'), card: $('card'), kick: $('cardKick'), shoot: $('shoot'), board: $('board'), sentence: $('sentence'), note: $('note'), next: $('nextBtn'),
   banner: $('banner'), flash: $('flash'), start: $('start'), end: $('end'), loading: $('loading'), labels: $('labels'),
 };
 const ICON = {
@@ -330,6 +358,16 @@ function renderShoot(el, results, now = -1) {
     if (r) s.innerHTML = ICON[r];
     el.appendChild(s);
   }
+}
+// the TV shootout board: FOX 3 – 2 ROB, a dot per kick under each name (green = goal, red = missed, empty = to come); sudden-death dots after a bar
+function renderBoard(el, now = -1) {
+  const T = tally(), me = myTeam(), sd = Math.max(0, Math.ceil((Math.max(now + 1, T.na + T.nb) - 2 * REG) / 2));
+  const dots = (t) => { let h = ''; for (let i = 0; i < REG + sd; i++) { const k = 2 * i + t, r = S.results[k]; if (i === REG) h += '<em class="sdbar"></em>';
+      h += `<i class="d${i >= REG ? ' sd' : ''}${r ? (r === 'goal' || r === 'let' ? ' g' : ' m') : k === now ? ' now' : ''}"></i>`; } return h; };
+  el.classList.toggle('many', sd >= 3);   // (a long sudden death: smaller dots, so the board never overflows an upright phone)
+  el.innerHTML = `<div class="tm a${me === 0 && MPG.on ? ' you' : ''}"><b>${esc(teamName(0))}</b><span class="dots">${dots(0)}</span></div>`
+    + `<div class="sc"><b>${T.a}</b><i>–</i><b>${T.b}</b></div>`
+    + `<div class="tm b${me === 1 && MPG.on ? ' you' : ''}"><b>${esc(teamName(1))}</b><span class="dots">${dots(1)}</span></div>`;
 }
 const labelEls = TINTS.map((_, k) => {
   const b = document.createElement('button');
@@ -349,7 +387,7 @@ function renderPack() {
   const best = store.get('penalty-best', {})[setKey()];
   const bl = $('bestLine');
   bl.classList.toggle('hidden', !best);
-  if (best) bl.innerHTML = `Your best: <b>${best.goals} / ${QN}</b> ${'★'.repeat(best.stars)}`;
+  if (best) bl.innerHTML = `Your best: ${bestText(best)}`;
 }
 async function openPicker() {
   if (!window.FugioPacks) return;
@@ -424,12 +462,14 @@ function flash(cb, hold = 120) {
 
 function setCard(q) {
   if (REMOTE) return remoteCard(q);
-  ui.kick.innerHTML = `PENALTY ${S.qi + 1} / ${QN} <em class="role ${S.gk ? 'gk' : 'gs'}">${S.gk ? 'KEEPER' : 'STRIKER'}</em>${MPG.on && MP.alive ? ` <em class="mpvs">vs ${esc(MP.fname.toUpperCase())}</em>` : ''}`;
-  if (MPG.on) mpClock(true);
+  const sdk = S.qi >= 2 * REG, shooter = teamName(S.qi % 2);
+  ui.kick.innerHTML = `${sdk ? '<em class="sdtag">SUDDEN DEATH</em> ' : `KICK ${S.qi + 1} · `}${S.gk ? `${esc(shooter)} SHOOTS · <em class="role gk">YOU'RE IN GOAL</em>` : MPG.on ? `<em class="role gs">YOU SHOOT</em>` : `<em class="role gs">${esc(shooter)} SHOOTS</em>`}`;
+  renderBoard(ui.board, S.qi);
+  mpClock(true);
   ui.sentence.innerHTML = `${hints(q.before)}<span class="gap">&nbsp;</span>${hints(q.after)}`;
   ui.note.className = ''; ui.note.innerHTML = MPG.on && MP.alive ? (S.gk ? `You are in goal! ${esc(MP.fname)} shoots: tap the right word to dive there!` : `You shoot! ${esc(MP.fname)} is in goal: tap the right word!`) : S.qi < 2 ? (S.gk ? 'You are in goal! Rob shoots at the right word: tap it to dive there!' : 'Your turn to shoot: tap the bubble with the right word!') : '&nbsp;';
   ui.next.classList.add('hidden');
-  renderShoot(ui.shoot, S.results, S.qi);
+  if (REMOTE) renderShoot(ui.shoot, S.results, S.qi);
 }
 function revealCard(goal) {
   const q = S.q;
@@ -438,8 +478,8 @@ function revealCard(goal) {
   else { ui.note.className = 'bad'; ui.note.innerHTML = S.timedOut ? `Too slow! The right word is <b>${esc(q.right)}</b>` : `Not <s>${esc(q.opts[S.chosen].text)}</s> · the right word is <b>${esc(q.right)}</b>`; }
   if (REMOTE && S.rnote) { ui.note.className = goal ? 'good' : 'bad'; ui.note.innerHTML = S.rnote; }
   if (S.mpNote) { ui.note.className = goal ? 'good' : 'bad'; ui.note.innerHTML = S.mpNote; }
-  renderShoot(ui.shoot, S.results, -1);
-  const el = ui.shoot.children[S.qi]; if (el) el.classList.add('pop');
+  if (REMOTE) { renderShoot(ui.shoot, S.results, -1); const el = ui.shoot.children[S.qi]; if (el) el.classList.add('pop'); }
+  else { renderBoard(ui.board, -1); const d = ui.board.querySelectorAll(`.tm.${S.qi % 2 ? 'b' : 'a'} .d`)[S.qi >> 1]; if (d) d.classList.add('pop'); }
 }
 
 // ---------- camera ----------
@@ -637,7 +677,7 @@ function startGame(given) {
   const qs = given || buildQuestions();
   if (!qs.length) return;
   flash(() => {
-    S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = []; S.streak = 0; S.lastPower = 0;
+    S.questions = qs; S.qi = -1; S.q = null; S.goals = 0; S.results = []; S.picks = []; S.ans = []; S.streak = 0; S.lastPower = 0;
     ui.start.classList.add('hidden'); ui.end.classList.add('hidden');
     ui.hud.classList.remove('hidden');
     $('playBtn').classList.remove('pulse');
@@ -665,12 +705,14 @@ function resetRound() {
 }
 
 function nextQuestion() {
-  S.qi++; S.gk = S.qi % 2 === (MPG.on && !MP.host ? 1 : 0);   // (2026-11-15, the user: "GK, GS, GK, GS…") keeper on 1, 3, 5, 7, 9; striker on 2, 4, 6, 8, 10
-  if (S.qi >= QN) { finish(); return; }
+  if (S.qi >= 0 && shootoutOver()) { finish(); return; }   // (the shootout is decided: early finish, sudden death or the cap)
+  S.qi++; S.gk = S.qi % 2 !== myTeam();   // (2026-11-26: a real shootout: FOX (the host's side in a party) kicks first: striker, keeper, striker …)
+  if (S.qi >= KMAX || !S.questions[S.qi]) { finish(); return; }
+  if (S.qi === 2 * REG) { showBanner('SUDDEN DEATH!', 'goal'); setTimeout(() => { if (ui.banner.textContent === 'SUDDEN DEATH!') ui.banner.innerHTML = ''; }, 1700); }
   S.q = S.questions[S.qi]; MPG.mine = null; S.mpNote = null; S.timedOut = false; S.shotK = null; S.diveK = null;
   resetRound();
   if (MPG.later && MPG.later.qi === S.qi) { const m = MPG.later; MPG.later = null; setTimeout(() => mpKick(m), 0); }
-  setPhase('aim');
+  setPhase('aim'); S.aimAt = performance.now(); S.aimU = 0;
   setCard(S.q);
   measureSafe(); fitPlay(); camSnap = true;
   S.q.opts.forEach((o, k) => {
@@ -695,13 +737,15 @@ function choose(k) {
   // the POWER SHOT: a striker's right answer after three right answers in a row (counting the keeper's saves too)
   S.power = !S.gk && S.isGoal && S.streak - S.lastPower >= 3; if (S.power) S.lastPower = S.streak;
   S.picks[S.qi] = q.opts[k].text;
+  (S.ans || (S.ans = []))[S.qi] = { h: { ok: S.isGoal && !S.timedOut, t: S.timedOut ? ansSecs(S.qi) : Math.min(ansSecs(S.qi), (performance.now() - (S.aimAt || performance.now())) / 1000) } };   // (for the tie-break)
+  mpClock(false);
   setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {};
-  labelEls[k].classList.add('picked');
-  bubbles[k].hot = 1;
-  sfx.pick();
+  if (!S.timedOut) { labelEls[k].classList.add('picked'); bubbles[k].hot = 1; sfx.pick(); }
   sfx.whistle(false, 0.12);
-  planShot();
+  planShot(); fromAim();
 }
+// solo: the clock ran out = a miss (he shoots at a wrong word and it is saved; in goal he dives the wrong way)
+function tooSlow() { if (S.phase !== 'aim' || !S.q) return; S.timedOut = true; choose((S.q.correct + 1) % S.q.opts.length); S.picks[S.qi] = ''; }
 
 // work out the ball's flight and Rob's dive before the run-up starts
 function planShot() {
@@ -760,7 +804,7 @@ function foxKeeper(dt) {
   const t = S.time, st = S.st;
   if (FOX_REACH == null) { const save = fox.root.position.clone(); fox.root.position.set(0, 0, 0); fox.root.rotation.set(0, 0, 0); fox.apply(KPOSE.reach(), Infinity, 0); FOX_REACH = Math.max(0.9, foxHands(_v2).y); fox.root.position.copy(save); fox.apply(KPOSE.ready(t), Infinity, 0); }
   fox.root.rotation.y = 0;
-  if (S.phase === 'aim' || st < SHOT.fdive.t0) { fox.root.position.set(KEEPER.x + Math.sin(t * 1.3) * 0.25, 0, KEEPER.z); fox.root.rotation.z = 0; fox.apply(KPOSE.ready(t), 8, dt); return; }
+  if (S.phase === 'aim' || st < SHOT.fdive.t0) { const set = S.phase === 'aim' ? smooth((S.aimU || 0) / AIM_U) : 1; fox.root.position.set(KEEPER.x + Math.sin(t * 1.3) * 0.25 * (1 - 0.6 * set), 0.05 * Math.abs(Math.sin(t * 4.4)) * (1 - 0.5 * set), KEEPER.z); fox.root.rotation.z = 0; fox.apply(KPOSE.ready(t), 8, dt); return; }   /* (bouncing on the line, settling as the taker gets close) */
   const D = SHOT.fdive, T = D.target, start = D.start || (D.start = fox.root.position.clone());
   const dx = T.x - start.x, ty = T.y;
   const th = clamp(Math.atan2(-dx, Math.max(ty, 0.2)), -1.45, 1.45), L = FOX_REACH;
@@ -787,15 +831,14 @@ function robShooter(dt) {
   const t = S.time, st = S.phase === 'shot' ? S.st : 0;
   rob.dive.rotation.set(0, 0, 0);
   const bob = (h) => rob.dive.position.set(0, ROB_BODY_Y + h, 0);
-  if (S.phase === 'aim' || st < SHOT.tRun) { rob.root.position.copy(ROB_START); rob.apply(RPOSES.ready(t), 6, dt); bob(0.02 * Math.abs(Math.sin(t * 2.6))); rob.face('focus'); return; }
-  if (st < SHOT.tKick) {
-    const u = (st - SHOT.tRun) / T_RUN, e = u * u * (1.6 - 0.6 * u);
+  const run = (u, bx, k) => { const e = u * u * (1.6 - 0.6 * u);
     rob.root.position.set(lerp(ROB_START.x, KICK_AT.x, e) - Math.sin(Math.PI * e) * 0.25, 0, lerp(ROB_START.z, KICK_AT.z, e));
-    rob.root.rotation.y = angDamp(rob.root.rotation.y, Math.atan2(SHOT.B.x * 0.3 - KICK_AT.x, -KICK_AT.z), 8, dt);
-    const ph = e * Math.PI * 4.2; rob.apply(RRUN(ph), 16, dt); bob(0.06 * Math.abs(Math.sin(ph)));
-    const step = Math.floor(ph / Math.PI); if (step !== S.ev.rstep) { S.ev.rstep = step; sfx.step(); }
-    return;
-  }
+    rob.root.rotation.y = angDamp(rob.root.rotation.y, Math.atan2(bx * 0.3 - KICK_AT.x, -KICK_AT.z), 8, dt);
+    const ph = e * Math.PI * 4.2; rob.apply(RRUN(ph), k, dt); bob(0.06 * Math.abs(Math.sin(ph)));
+    const step = Math.floor(ph / Math.PI); if (step !== S.ev.rstep) { S.ev.rstep = step; sfx.step(); } };
+  if (S.phase === 'aim') { S.aimU = aimU(); rob.face('focus'); if (S.aimU > 0) run(S.aimU, 0, 6); else { rob.root.position.copy(ROB_START); rob.apply(RPOSES.ready(t), 6, dt); bob(0.02 * Math.abs(Math.sin(t * 2.6))); } return; }   // (the question is up: his slow-motion run-up)
+  if (st < SHOT.tRun) { rob.root.position.copy(ROB_START); rob.apply(RPOSES.ready(t), 6, dt); bob(0.02 * Math.abs(Math.sin(t * 2.6))); rob.face('focus'); return; }
+  if (st < SHOT.tKick) { run((st - SHOT.tRun) / T_RUN, SHOT.B.x, 16); return; }
   const u = (st - SHOT.tKick) / T_KICK;
   if (u < 1.2) { rob.root.position.copy(KICK_AT); rob.apply(RKICK(Math.min(u, 1)), u < 0.1 ? 18 : 40, dt); bob(0); return; }
   { const k = smooth((u - 1.2) / 1.1); rob.root.position.set(lerp(KICK_AT.x, KICK_AT.x - 2.1, k), 0, lerp(KICK_AT.z, KICK_AT.z + 0.9, k)); }   // (he steps aside so the keeper can be seen)
@@ -877,7 +920,7 @@ function updateShot(dt) {
   if (S.tRes && !S.nextShown && S.time - S.tRes > (S.isGoal ? 1.5 : 1.8)) {
     S.nextShown = true;
     if (REMOTE) { window.parent.postMessage({ fs: 'done', slot: RSLOT, goal: S.isGoal }, '*'); return; }
-    ui.next.innerHTML = (S.qi + 1 >= QN ? 'RESULTS' : 'NEXT') + ' <span aria-hidden="true">&#9654;</span>';
+    ui.next.innerHTML = (shootoutOver() ? 'RESULTS' : 'NEXT') + ' <span aria-hidden="true">&#9654;</span>';
     ui.next.classList.remove('hidden');
   }
   if (!REMOTE && S.tRes && S.time - S.tRes > (MPG.on ? 3.2 : S.isGoal ? 2.4 : 9)) advance();   // (2026-11-15) a goal or a save goes on to the next penalty by itself
@@ -966,11 +1009,17 @@ function finish() {
   ball.position.set(LOBBY.x + 0.42, BALL_R, LOBBY.z + 0.25);
   camSnap = true;
   sfx.whistle(false, 0.0); sfx.whistle(false, 0.45); sfx.whistle(true, 0.9);
-  const stars = S.goals >= 9 ? 3 : S.goals >= 6 ? 2 : 1;
-  S.endStars = stars;
-  $('endTitle').textContent = stars === 3 ? 'Penalty Star!' : stars === 2 ? 'Great shooting!' : 'Good try!';
-  $('endGoals').textContent = S.goals;
-  renderShoot($('endShoot'), S.results);
+  // the shootout's result: who won, by how much, and how (goals, or the tie-break after the capped sudden death)
+  const W = shootoutWinner(), me = myTeam(), won = W.w === me, kicks = W.na + W.nb, A = S.ans || [];
+  let right = 0; for (let k = 0; k < kicks; k++) { const x = A[k] || {}, mine = MPG.on && !MP.host ? x.g : x.h; if (mine && mine.ok) right++; }
+  const share = kicks ? right / kicks : 0, stars = share >= 0.8 ? 3 : share >= 0.6 ? 2 : 1;   // (stars: the share of right answers over the shootout)
+  S.endStars = stars; S.endWin = { ...W, won, right, kicks };
+  const wn = teamName(W.w);
+  const title = $('endTitle'); title.textContent = W.how === 'goals' ? `${wn} WINS ${W.w === 0 ? W.a : W.b}–${W.w === 0 ? W.b : W.a} ON PENALTIES!` : `${wn} WINS THE SHOOTOUT!`; title.className = 'cm ptext endwin' + (won ? '' : ' bad');
+  const how = W.how === 'goals' ? (kicks > 2 * REG ? `after ${(kicks - 2 * REG) / 2} sudden-death round${kicks - 2 * REG > 2 ? 's' : ''}` : kicks < 2 * REG ? 'it was decided early' : '') : `level ${W.a}–${W.b} after sudden death: ${wn} wins on ${W.how === 'right' ? 'right answers' : 'faster answers'}`;
+  $('endGoals').textContent = `${W.a} – ${W.b}`; const es = document.querySelector('#end .endscore span'); es.parentElement.classList.add('shoot'); es.parentElement.hidden = !how; if (es) es.innerHTML = how ? `<small class="endhow">${esc(how.toUpperCase())}</small>` : '';   /* (the score itself is on the board below) */
+  $('endShoot').className = 'sboard end'; renderBoard($('endShoot'), -1);
+  if (W.how !== 'goals') { showBanner(`LEVEL! ${wn} WINS ON ${W.how === 'right' ? 'RIGHT ANSWERS' : 'FASTER ANSWERS'}`, won ? 'goal' : 'saved'); setTimeout(() => { ui.banner.innerHTML = ''; }, 2600); }
   const starEls = [...document.querySelectorAll('#stars i')];
   starEls.forEach((el) => el.classList.remove('on'));
   starEls.forEach((el, i) => { if (i < stars) setTimeout(() => { el.classList.add('on'); sfx.star(i); }, 700 + i * 320); });
@@ -983,21 +1032,23 @@ function finish() {
     list.appendChild(li);
   });
   $('missed').classList.toggle('hidden', !list.children.length);
-  const all = store.get('penalty-best', {}), k = setKey(), prev = all[k];
-  S.newBest = !prev || S.goals > prev.goals;
-  if (S.newBest) { all[k] = { goals: S.goals, stars }; store.set('penalty-best', all); }
+  // the best: per question set, the most stars, then the biggest share of right answers (an old best from the 10-penalty game counts by its stars)
+  const all = store.get('penalty-best', {}), key = setKey(), prev = all[key], pshare = prev && prev.kicks ? prev.right / prev.kicks : -1;
+  S.newBest = !prev || stars > (prev.stars || 0) || (stars === (prev.stars || 0) && share > pshare);
+  if (S.newBest) { all[key] = { stars, right, kicks, won, score: `${W.a}–${W.b}`, v: 2 }; store.set('penalty-best', all); }
   renderEndBest();
   renderPack();
   ui.end.classList.remove('hidden');
   ui.end.scrollTop = 0;
   $('againBtn').classList.add('pulse');
-  if (stars >= 2) { S.cheer = 1; sfx.cheer(); confetti.burst(_v.set(LOBBY.x, 0, LOBBY.z - 1), 5, 4); }
-  if (LIST && window.parent !== window) window.parent.postMessage({ fs: 'finished', goals: S.goals, stars, of: QN }, '*');
+  if (won) { S.cheer = 1; sfx.cheer(); confetti.burst(_v.set(LOBBY.x, 0, LOBBY.z - 1), 5, 4); }
+  if (LIST && window.parent !== window) window.parent.postMessage({ fs: 'finished', shootout: true, goals: me === 0 ? W.a : W.b, vs: me === 0 ? W.b : W.a, won, how: W.how, stars, right, of: kicks }, '*');   // (my side's goals, theirs, and who won)
   fox.face('happy');
 }
+function bestText(b) { return b.kicks ? `<b>${b.right} / ${b.kicks} right</b> ${'★'.repeat(b.stars || 1)}${b.score ? ` · ${b.won ? 'won' : 'lost'} ${esc(b.score)}` : ''}` : `<b>${b.goals} / 10</b> ${'★'.repeat(b.stars || 1)}`; }
 function renderEndBest() {
   const best = store.get('penalty-best', {})[setKey()];
-  $('endBest').innerHTML = S.newBest && S.phase === 'end' && best && best.goals === S.goals ? `<b>NEW BEST</b> for these questions!` : best ? `Your best for these questions: <b>${best.goals} / ${QN}</b>` : '';
+  $('endBest').innerHTML = S.newBest && S.phase === 'end' ? `<b>NEW BEST</b> for these questions!` : best ? `Your best for these questions: ${bestText(best)}` : '';
 }
 
 // ---------- animation: Foxino ----------
@@ -1026,23 +1077,14 @@ function animateFox(dt) {
   } else if (S.gk && (p === 'aim' || p === 'shot')) {
     foxKeeper(dt);
   } else if (p === 'aim') {
-    fox.apply(POSES.ready(t), 8, dt);
+    S.aimU = aimU();   // (the question is up: the slow-motion run-up toward the ball)
+    if (S.aimU > 0) foxRun(S.aimU, dt, 0, 6); else fox.apply(POSES.ready(t), 8, dt);
   } else if (p === 'shot') {
     const st = S.st;
     if (st < SHOT.tRun) {
       fox.apply(POSES.ready(t), 8, dt);
     } else if (st < SHOT.tKick) {
-      const u = (st - SHOT.tRun) / T_RUN;
-      const e = u * u * (1.6 - 0.6 * u); // accelerate from a standstill
-      const x = lerp(FOX_START.x, KICK_AT.x, e) - Math.sin(Math.PI * e) * 0.25, z = lerp(FOX_START.z, KICK_AT.z, e);
-      const px = fox.root.position.x, pz = fox.root.position.z;
-      fox.root.position.set(x, 0, z);
-      const yaw = Math.abs(x - px) + Math.abs(z - pz) > 1e-4 ? faceYaw(px, pz, x, z) : fox.root.rotation.y;
-      fox.root.rotation.y = angDamp(fox.root.rotation.y, angLerp(yaw, faceYaw(KICK_AT.x, KICK_AT.z, SHOT.B.x * 0.3, 0), smooth((u - 0.6) / 0.4)), 10, dt);
-      const ph = e * Math.PI * 4.2;
-      fox.apply(POSES.run(ph, 1), 16, dt);
-      const step = Math.floor(ph / Math.PI);
-      if (step !== S.ev.step) { S.ev.step = step; sfx.step(); }
+      foxRun((st - SHOT.tRun) / T_RUN, dt, SHOT.B.x, 16);
     } else {
       const u = (st - SHOT.tKick) / T_KICK;
       if (!S.tRes || st < SHOT.tKick + T_KICK) {
@@ -1060,6 +1102,19 @@ function animateFox(dt) {
     else fox.apply(S.pt < 2.2 ? POSES.stand(t) : POSES.wave(t), 6, dt);
   }
   fox.update(dt, t);
+}
+// Foxino's run-up at u (0 = waiting, 1 = the plant beside the ball): accelerating from a standstill, curving in, turning to the shot at the end
+function foxRun(u, dt, bx, k) {
+  const e = u * u * (1.6 - 0.6 * u);
+  const x = lerp(FOX_START.x, KICK_AT.x, e) - Math.sin(Math.PI * e) * 0.25, z = lerp(FOX_START.z, KICK_AT.z, e);
+  const px = fox.root.position.x, pz = fox.root.position.z;
+  fox.root.position.set(x, 0, z);
+  const yaw = Math.abs(x - px) + Math.abs(z - pz) > 1e-5 ? faceYaw(px, pz, x, z) : fox.root.rotation.y;
+  fox.root.rotation.y = angDamp(fox.root.rotation.y, angLerp(yaw, faceYaw(KICK_AT.x, KICK_AT.z, bx * 0.3, 0), smooth((u - 0.6) / 0.4)), 10, dt);
+  const ph = e * Math.PI * 4.2;
+  fox.apply(POSES.run(ph, 1), k, dt);
+  const step = Math.floor(ph / Math.PI);
+  if (step !== S.ev.step) { S.ev.step = step; sfx.step(); }
 }
 // after a goal: turn to the camera, run, knee slide, then jump about
 function celebrateFox(dt) {
@@ -1103,7 +1158,7 @@ function animateRob(dt) {
     const sway = Math.sin(t * 1.3) * 0.35;
     const pose = p === 'menu' && Math.sin(t * 0.4) > 0.6 ? RPOSES.wave(t) : RPOSES.ready(t);
     rob.apply(pose, 6, dt);
-    rob.dive.position.set(p === 'aim' || p === 'shot' ? sway : sway * 0.5, ROB_BODY_Y - 0.04 + 0.02 * Math.abs(Math.sin(t * 2.6)), 0);
+    rob.dive.position.set(p === 'aim' || p === 'shot' ? sway : sway * 0.5, ROB_BODY_Y - 0.04 + (p === 'aim' ? 0.05 * Math.abs(Math.sin(t * 4.4)) : 0.02 * Math.abs(Math.sin(t * 2.6))), 0);   /* (bouncing on the line while the question is up) */
     rob.dive.rotation.set(0, 0, 0);
     rob.root.rotation.y = 0;
     if (p !== 'shot') rob.face(p === 'aim' ? 'focus' : 'happy');
@@ -1248,7 +1303,7 @@ function updateLabels() {
     // as big as the space between two bubbles allows (the words matter more than the bubbles)
     const colPx = (r / Math.max(b.mesh.scale.x, 0.01)) * GAP * 1.05;
     const maxW = Math.max(72, Math.min(colPx - 6, W * 0.42));
-    const fs = Math.floor(clamp(Math.min(Math.max(r * 0.62, 21), (maxW - 16) / (0.56 * longest + 0.3)), 15, 38));
+    const fs = Math.floor(clamp(Math.min(Math.max(r * 0.62, 21), (maxW - 16) / (0.6 * longest + 1.15)), 15, 38));   /* (2026-11-27: + the label's own padding, so a longer word (German: hattest, Bundesländer) stays on one line) */
     el.style.width = el.style.height = Math.round(box) + 'px';
     el.style.fontSize = fs + 'px';
     el.firstChild.style.maxWidth = Math.round(maxW) + 'px';
@@ -1337,7 +1392,7 @@ function remoteKick(m) {
   S.questions = []; S.questions[S.qi] = S.q;
   bubbles.forEach((b) => { b.mesh.visible = false; }); labelEls.forEach((l) => { l.style.opacity = '0'; l.className = 'blabel'; });
   ui.start.classList.add('hidden'); ui.end.classList.add('hidden'); $('locker').classList.add('hidden'); ui.hud.classList.remove('hidden');
-  resetRound(); setPhase('aim'); setCard(S.q);
+  resetRound(); setPhase('aim'); S.aimAt = 0; S.aimU = 0; setCard(S.q);
   measureSafe(); fitPlay(); camSnap = true;
   opts.forEach((o, k) => {
     const b = bubbles[k];
@@ -1378,25 +1433,26 @@ function mpClock(on) { let el = document.getElementById('mpClock'); if (!el) { e
   cancelAnimationFrame(MPG.raf); el.style.visibility = on ? '' : 'hidden'; if (!on) return;
   const T = mpSecs(S.qi) * 1000, t0 = performance.now(), qi = S.qi, bar = el.firstChild;
   const f = () => { const left = T - (performance.now() - t0); bar.style.width = Math.max(0, left / T * 100) + '%'; el.classList.toggle('hot', left < 3000);
-    if (left <= 0) { if (S.qi === qi && S.phase === 'aim' && MPG.mine == null) mpChoose(-1); return; } if (S.qi === qi && S.phase === 'aim') MPG.raf = requestAnimationFrame(f); }; MPG.raf = requestAnimationFrame(f); }
+    if (left <= 0) { if (S.qi === qi && S.phase === 'aim' && MPG.mine == null) { if (MPG.on) mpChoose(-1); else tooSlow(); } return; } if (S.qi === qi && S.phase === 'aim') MPG.raf = requestAnimationFrame(f); }; MPG.raf = requestAnimationFrame(f); }
 function mpBot(qi) { const q = S.questions[qi]; return Math.random() < 0.65 ? q.correct : (q.correct + 1 + Math.floor(Math.random() * (q.opts.length - 1))) % q.opts.length; }
 function mpChoose(k) {
   if (S.phase !== 'aim' || MPG.mine != null) return; if (k >= 0 && (k >= NB || !S.q.opts[k])) return;
-  MPG.mine = k; S.timedOut = k < 0; mpClock(false);
+  MPG.mine = k; S.timedOut = k < 0; mpClock(false); const mt = k < 0 ? ansSecs(S.qi) : Math.min(ansSecs(S.qi), (performance.now() - (S.aimAt || performance.now())) / 1000);
   if (k >= 0) { labelEls[k].classList.add('picked'); bubbles[k].hot = 1; sfx.pick(); }
   ui.note.className = ''; ui.note.innerHTML = k < 0 ? 'Too slow!' : (MP.alive ? `Waiting for ${esc(MP.fname)}…` : '&nbsp;');
   const me = MP.host ? 'h' : 'g';
-  if (!MP.alive) { mpResolve(S.qi, me === 'h' ? k : mpBot(S.qi), me === 'g' ? k : mpBot(S.qi)); return; }
-  if (MP.host) { (MPG.picks[S.qi] = MPG.picks[S.qi] || {}).h = k; mpTry(S.qi); } else MP.send({ t: 'pick', qi: S.qi, k });
+  if (!MP.alive) { mpResolve(S.qi, me === 'h' ? k : mpBot(S.qi), me === 'g' ? k : mpBot(S.qi), mt, mt); return; }
+  if (MP.host) { const P = (MPG.picks[S.qi] = MPG.picks[S.qi] || {}); P.h = k; P.ht = mt; mpTry(S.qi); } else MP.send({ t: 'pick', qi: S.qi, k, ms: mt });
 }
 // the referee: both picks in (or the friend's clock ran out long ago) → the kick
 function mpTry(qi) { const P = MPG.picks[qi]; if (!P || MPG.done[qi]) return;
-  if (P.h != null && P.g != null) { MPG.done[qi] = 1; clearTimeout(MPG.safety); const m = { t: 'kick', qi, h: P.h, g: P.g }; MP.send(m); mpKick(m); return; }
+  if (P.h != null && P.g != null) { MPG.done[qi] = 1; clearTimeout(MPG.safety); const m = { t: 'kick', qi, h: P.h, g: P.g, ht: P.ht ?? ansSecs(qi), gt: P.gt ?? ansSecs(qi) }; MP.send(m); mpKick(m); return; }
   if (P.h != null && P.g == null) { clearTimeout(MPG.safety); MPG.safety = setTimeout(() => { if (!MPG.done[qi]) { P.g = -1; mpTry(qi); } }, mpSecs(qi) * 1000 + 6000); } }
-function mpKick(m) { if (m.qi !== S.qi || MPG.kicked === m.qi) { MPG.later = m; return; } mpResolve(m.qi, m.h, m.g); }
-function mpResolve(qi, h, g) {
+function mpKick(m) { if (m.qi !== S.qi || MPG.kicked === m.qi) { MPG.later = m; return; } mpResolve(m.qi, m.h, m.g, m.ht, m.gt); }
+function mpResolve(qi, h, g, ht, gt) {
   if (MPG.kicked === qi) return; MPG.kicked = qi;
   const q = S.q, mine = MP.host ? h : g, theirs = MP.host ? g : h, ok = (k) => k >= 0 && !!q.opts[k] && q.opts[k].ok;
+  (S.ans || (S.ans = []))[qi] = { h: { ok: ok(h), t: ht ?? ansSecs(qi) }, g: { ok: ok(g), t: gt ?? ansSecs(qi) } };   // (the same on both phones: for the tie-break)
   const wrongOf = (k) => (k >= 0 ? k : (q.correct + 1) % q.opts.length), me = ok(mine), they = ok(theirs), fn = esc(MP.fname);
   S.chosen = mine >= 0 ? mine : wrongOf(-1); S.picks[S.qi] = q.opts[S.chosen].text; S.streak = me ? S.streak + 1 : 0; S.power = false; S.shotK = null; S.diveK = null; S.mpEarn = false;
   if (!S.gk) {   // I shoot, the friend keeps: a goal only if I'm right and they're wrong
@@ -1408,13 +1464,13 @@ function mpResolve(qi, h, g) {
     S.diveK = !they ? S.shotK : S.chosen;
     S.mpNote = !they ? `${fn} missed the right word! It was <b>${esc(q.right)}</b>` : me ? null : null;
   }
-  setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {}; sfx.whistle(false, 0.12); planShot();
+  setPhase('shot'); S.st = 0; S.sub = 'wait'; S.ev = {}; sfx.whistle(false, 0.12); planShot(); fromAim();
 }
 async function mpStart() {
   window.MPBOT = { q: () => (S.phase === 'aim' && S.q && MPG.mine == null ? { id: 'p' + S.qi, correct: S.q.correct, n: S.q.opts.length } : null), answer: (k) => choose(k), state: () => ({ qi: S.qi, gk: S.gk, goals: S.goals, phase: S.phase }) };
   MP.listen((m) => {
     if (m.t === 'qs' && !MP.host && !MPG.got) { MPG.got = true; startGame(m.qs); return; }
-    if (m.t === 'pick' && MP.host) { (MPG.picks[m.qi] = MPG.picks[m.qi] || {}).g = m.k; mpTry(m.qi); return; }
+    if (m.t === 'pick' && MP.host) { const P = (MPG.picks[m.qi] = MPG.picks[m.qi] || {}); P.g = m.k; P.gt = m.ms; mpTry(m.qi); return; }
     if (m.t === 'kick' && !MP.host) { mpKick(m); return; }
   });
   MP.onLost(() => { showBanner(`${MP.fname.toUpperCase()} LEFT`, 'saved'); if (S.phase === 'aim' && MPG.mine != null && MPG.kicked !== S.qi) { const me = MP.host ? 'h' : 'g', k = MPG.mine; mpResolve(S.qi, me === 'h' ? k : mpBot(S.qi), me === 'g' ? k : mpBot(S.qi)); } if (!S.questions || !S.questions.length) startGame(); });
@@ -1442,10 +1498,10 @@ function init() {
 }
 
 // ---------- test hooks ----------
-window.PS = {
-  ready: false,
+window.PS = { showBanner: (...a) => showBanner(...a),
+  ready: false, get renderer() { return renderer; },   // (tests: the renderer, so a harness can count the triangles drawn per frame)
   state: () => ({
-    phase: S.phase, sub: S.sub, q: S.qi + 1, total: QN, goals: S.goals, results: S.results.slice(),
+    phase: S.phase, sub: S.sub, q: S.qi + 1, total: KMAX, goals: S.goals, results: S.results.slice(), gk: S.gk, board: tally(), over: shootoutOver(), end: S.endWin || null, secs: S.q ? ansSecs(S.qi) : 0,
     sentence: S.q ? `${S.q.before}___${S.q.after}` : null, right: S.q && S.q.right,
     options: S.q && S.q.opts.map((o) => o.text), spots: S.q && S.q.opts.map((o) => [o.x, o.y]), correct: S.q ? S.q.correct : -1,
     chosen: S.chosen, nextShown: S.nextShown, net: +stadium.net.dent.toFixed(3), st: +S.st.toFixed(2), since: S.tRes ? +(S.time - S.tRes).toFixed(2) : 0, time: +S.time.toFixed(2), keeper: rob.expression, fov: +camera.fov.toFixed(2), pixelRatio: pr, gfx: GFX.level,
